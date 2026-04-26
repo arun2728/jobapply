@@ -25,6 +25,11 @@ from jobapply.config import (
 from jobapply.config_writer import render_config_toml
 from jobapply.graph_nodes import bootstrap_resume_state
 from jobapply.models import JobSearchInput
+from jobapply.profile_import import (
+    SUPPORTED_SUFFIXES,
+    ResumeImportError,
+    import_resume_to_profile_md,
+)
 from jobapply.runner import run_pipeline
 from jobapply.utils import profile_hash as profile_hash_fn
 
@@ -51,6 +56,52 @@ def _write_profile(target: Path, force: bool) -> None:
         return
     target.write_text(_default_profile_text(), encoding="utf-8")
     console.print(f"[green]Wrote[/green] {target}")
+
+
+def _validate_resume_path(raw: str) -> Path | None:
+    """Parse user input into a usable resume path or report why it can't be used."""
+    text = raw.strip().strip('"').strip("'")
+    if not text:
+        return None
+    expanded = Path(text).expanduser().resolve()
+    if not expanded.is_file():
+        console.print(f"[red]Not a file:[/red] {expanded}")
+        return None
+    if expanded.suffix.lower() not in SUPPORTED_SUFFIXES:
+        console.print(
+            f"[red]Unsupported format[/red] '{expanded.suffix}'. "
+            f"Use one of: {', '.join(SUPPORTED_SUFFIXES)}.",
+        )
+        return None
+    return expanded
+
+
+def _import_profile_from_resume(
+    resume_path: Path,
+    target: Path,
+    cfg: AppConfig,
+    force: bool,
+) -> bool:
+    """Convert ``resume_path`` to ``target`` profile.md. Returns True on success."""
+    if (
+        target.is_file()
+        and not force
+        and not questionary.confirm(
+            f"{target.name} already exists. Overwrite with imported resume?",
+            default=False,
+        ).ask()
+    ):
+        console.print(f"[yellow]Skip[/yellow] {target} (kept existing)")
+        return False
+    console.print(f"[dim]Importing {resume_path.name}…[/dim]")
+    try:
+        text = import_resume_to_profile_md(resume_path, cfg)
+    except ResumeImportError as exc:
+        console.print(f"[red]Resume import failed:[/red] {exc}")
+        return False
+    target.write_text(text, encoding="utf-8")
+    console.print(f"[green]Wrote[/green] {target} (imported from {resume_path.name})")
+    return True
 
 
 def _ask_provider_settings(provider: str, current: ProviderConfig) -> ProviderConfig:
@@ -141,6 +192,16 @@ def init(
         "--non-interactive",
         help="Skip prompts and write a default jobapply.toml template.",
     ),
+    resume_path: str | None = typer.Option(
+        None,
+        "--resume",
+        "-r",
+        help=(
+            "Optional path to an existing resume "
+            f"({', '.join(SUPPORTED_SUFFIXES)}). "
+            "If set, profile.md is generated from it (LLM rewrite when an API key is configured)."
+        ),
+    ),
 ) -> None:
     """Interactively set up provider credentials and starter profile."""
     load_dotenv_if_present()
@@ -148,39 +209,62 @@ def init(
     profile_target = root / "profile.md"
     cfg_path = find_config_path(root)
 
+    cfg: AppConfig
     if non_interactive:
-        _write_profile(profile_target, force=force)
         if cfg_path.is_file() and not force:
             console.print(f"[yellow]Skip[/yellow] existing {cfg_path}")
+            cfg = load_config(root)
         else:
-            _persist_config(AppConfig(), cfg_path)
+            cfg = AppConfig()
+            _persist_config(cfg, cfg_path)
+    else:
+        console.print("[bold]Welcome to jobapply.[/bold] Let's configure your provider.\n")
+        existing = load_config(root) if cfg_path.is_file() else None
+        if existing and not force:
+            if questionary.confirm(
+                f"{cfg_path.name} already exists. Update it now?",
+                default=True,
+            ).ask():
+                cfg = _interactive_config(existing)
+                _persist_config(cfg, cfg_path)
+            else:
+                console.print("[dim]Keeping existing config.[/dim]")
+                cfg = existing
+        else:
+            cfg = _interactive_config(existing)
+            _persist_config(cfg, cfg_path)
+
+    imported = False
+    chosen: Path | None = None
+    if resume_path:
+        chosen = _validate_resume_path(resume_path)
+    elif not non_interactive:
+        answer = questionary.text(
+            "Path to an existing resume to import "
+            f"({'/'.join(SUPPORTED_SUFFIXES)}, blank to skip)",
+            default="",
+        ).ask()
+        if answer is None:
+            raise typer.Exit(1)
+        chosen = _validate_resume_path(answer)
+
+    if chosen is not None:
+        imported = _import_profile_from_resume(chosen, profile_target, cfg, force=force)
+
+    if not imported:
+        _write_profile(profile_target, force=force)
+
+    if non_interactive:
         console.print(
             "[dim]Edit jobapply.toml to add your provider keys, or rerun "
             "`jobapply init` for the interactive flow.[/dim]",
         )
-        return
-
-    console.print("[bold]Welcome to jobapply.[/bold] Let's configure your provider.\n")
-    existing = load_config(root) if cfg_path.is_file() else None
-    if existing and not force:
-        if not questionary.confirm(
-            f"{cfg_path.name} already exists. Update it now?",
-            default=True,
-        ).ask():
-            console.print("[dim]Keeping existing config.[/dim]")
-        else:
-            cfg = _interactive_config(existing)
-            _persist_config(cfg, cfg_path)
     else:
-        cfg = _interactive_config(existing)
-        _persist_config(cfg, cfg_path)
-
-    _write_profile(profile_target, force=force)
-    console.print(
-        "\n[bold green]Setup complete.[/bold green] "
-        "Run `jobapply run --titles ...` to start.\n"
-        "[dim]Tip: add `jobapply.toml` to .gitignore if you stored secrets in it.[/dim]",
-    )
+        console.print(
+            "\n[bold green]Setup complete.[/bold green] "
+            "Run `jobapply run --titles ...` to start.\n"
+            "[dim]Tip: add `jobapply.toml` to .gitignore if you stored secrets in it.[/dim]",
+        )
 
 
 @app.command("config")

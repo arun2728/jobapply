@@ -19,7 +19,9 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
 jobapply init           # interactive: pick provider, paste keys, choose model
-# edit profile.md
+# Optional: import an existing resume instead of editing profile.md by hand:
+# jobapply init --resume ~/Downloads/resume.pdf   # .md / .txt / .docx / .pdf
+# edit profile.md if needed
 
 jobapply run --titles "Backend Engineer,ML Engineer" --skills "Python,Kubernetes" --location "Remote" --yes
 ```
@@ -49,7 +51,7 @@ jobapply run --titles "Backend Engineer,ML Engineer" --skills "Python,Kubernetes
 
 | Command | Description |
 |---------|-------------|
-| `jobapply init` | Interactive setup: provider + connection details + starter `profile.md` (`--non-interactive` for a blank template) |
+| `jobapply init` | Interactive setup: provider + connection details + starter `profile.md`. Pass `--resume <path>` (`.md` / `.txt` / `.docx` / `.pdf`, including LinkedIn PDF export) to auto-generate `profile.md` from an existing resume — the configured LLM cleans it up; without a key it falls back to embedding the raw text. `--non-interactive` writes a blank template. |
 | `jobapply config` | Re-run the provider prompts; `--show` prints the resolved config |
 | `jobapply run` | Full pipeline (prompts unless `--yes`) |
 | `jobapply resume <run-name>` | Continue from `meta.json` (default: reset checkpoint) |

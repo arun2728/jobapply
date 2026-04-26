@@ -12,3 +12,5 @@ output/
 jobapply.toml
 *.sqlite
 .DS_Store
+profile.md
+inspiration.md
