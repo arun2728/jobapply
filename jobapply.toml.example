@@ -53,3 +53,25 @@ model = "gpt-4o-mini"
 # api_key = ""
 base_url = "http://127.0.0.1:11434"
 model = "llama3.1"
+
+
+# --- LaTeX → PDF compile service -------------------------------------------
+# By default jobapply POSTs your tailored .tex to a hosted latex-on-http
+# instance and writes the returned PDF — no local TeX install required.
+# Local engines (`tectonic`, `pdflatex`) are still used as fallbacks if
+# the API is unreachable or disabled.
+#
+# To self-host (recommended for privacy / reliability):
+#   docker run -d -p 8080:8080 yotools/latex-on-http
+# then set `url = "http://localhost:8080/builds/sync"` below.
+#
+# Each setting can be overridden at runtime with an env var:
+#   JOBAPPLY_LATEX_API_URL, JOBAPPLY_LATEX_API_DISABLE,
+#   JOBAPPLY_LATEX_API_COMPILER, JOBAPPLY_LATEX_API_TIMEOUT
+
+[latex_api]
+enabled = true
+url = "https://latex.ytotech.com/builds/sync"
+# Engine the API runs: pdflatex | xelatex | lualatex | latexmk
+compiler = "pdflatex"
+timeout = 120.0

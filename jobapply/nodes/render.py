@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -668,31 +669,164 @@ def probe_md_pdf_backend() -> str:
         return ""
 
 
-def tex_to_pdf(tex_path: Path, out_dir: Path) -> Path | None:
-    """Compile with tectonic if available, else pdflatex."""
+# --- LaTeX → PDF ----------------------------------------------------------- #
+#
+# Strategy (in order):
+#   1. Remote latex-on-http API — no local TeX install needed.
+#      Configurable via env vars so deployments and CI pick up overrides
+#      without touching the rendering layer:
+#        JOBAPPLY_LATEX_API_URL       (defaults to the public ytotech.com instance)
+#        JOBAPPLY_LATEX_API_DISABLE   (set to "1" to skip the remote step entirely)
+#        JOBAPPLY_LATEX_API_COMPILER  (pdflatex | xelatex | lualatex | latexmk)
+#        JOBAPPLY_LATEX_API_TIMEOUT   (seconds)
+#   2. Local `tectonic`  — auto-fetches missing packages, single binary.
+#   3. Local `pdflatex`  — last-resort fallback for full TeX Live installs.
+#
+# `jobapply.config.apply_latex_api_env` bridges TOML config → env so the CLI
+# stays the single source of truth without coupling render.py to config.py.
+
+DEFAULT_LATEX_API_URL = "https://latex.ytotech.com/builds/sync"
+DEFAULT_LATEX_API_TIMEOUT = 120.0
+_LATEX_DISABLED_VALUES = {"1", "true", "yes", "on"}
+
+
+def _latex_api_disabled() -> bool:
+    raw = os.environ.get("JOBAPPLY_LATEX_API_DISABLE", "").strip().lower()
+    return raw in _LATEX_DISABLED_VALUES
+
+
+def _latex_api_url() -> str:
+    return os.environ.get("JOBAPPLY_LATEX_API_URL", "").strip() or DEFAULT_LATEX_API_URL
+
+
+def _latex_api_compiler() -> str:
+    value = os.environ.get("JOBAPPLY_LATEX_API_COMPILER", "").strip()
+    return value or "pdflatex"
+
+
+def _latex_api_timeout() -> float:
+    raw = os.environ.get("JOBAPPLY_LATEX_API_TIMEOUT", "").strip()
+    if not raw:
+        return DEFAULT_LATEX_API_TIMEOUT
+    try:
+        return float(raw)
+    except ValueError:
+        return DEFAULT_LATEX_API_TIMEOUT
+
+
+def _tex_to_pdf_remote(tex_path: Path, out_dir: Path) -> Path | None:
+    """POST the .tex content to a latex-on-http endpoint and write the PDF.
+
+    Returns the output path on success, ``None`` on any failure (network
+    error, non-201 response, write failure). Failures are silent so the
+    caller can transparently fall back to local engines.
+    """
+    try:
+        import httpx  # lazy; httpx is already a project dependency
+    except Exception:
+        return None
+
+    try:
+        latex = tex_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+    payload = {
+        "compiler": _latex_api_compiler(),
+        "resources": [{"main": True, "content": latex}],
+    }
+    try:
+        resp = httpx.post(_latex_api_url(), json=payload, timeout=_latex_api_timeout())
+    except Exception:
+        return None
+
+    # latex-on-http returns 201 + application/pdf on success; failures come back
+    # as 4xx/5xx with a JSON build log. We only treat a real PDF as success.
+    if resp.status_code != 201:
+        return None
+    body = resp.content
+    if not body.startswith(b"%PDF-"):
+        return None
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = out_dir / (tex_path.stem + ".pdf")
+    try:
+        pdf_path.write_bytes(body)
+    except OSError:
+        return None
+    return pdf_path
+
+
+def _tex_to_pdf_tectonic(tex_path: Path, out_dir: Path) -> Path | None:
     tectonic = shutil.which("tectonic")
-    if tectonic:
+    if not tectonic:
+        return None
+    try:
         proc = subprocess.run(
             [tectonic, "--outdir", str(out_dir), str(tex_path)],
             capture_output=True,
             text=True,
             timeout=120,
         )
-        if proc.returncode == 0:
-            return out_dir / (tex_path.stem + ".pdf")
+    except (OSError, subprocess.TimeoutExpired):
         return None
+    if proc.returncode != 0:
+        return None
+    return out_dir / (tex_path.stem + ".pdf")
+
+
+def _tex_to_pdf_pdflatex(tex_path: Path, out_dir: Path) -> Path | None:
     pdflatex = shutil.which("pdflatex")
-    if pdflatex:
+    if not pdflatex:
+        return None
+    try:
         proc = subprocess.run(
             [pdflatex, "-interaction=nonstopmode", f"-output-directory={out_dir}", str(tex_path)],
             capture_output=True,
             text=True,
             timeout=120,
         )
-        if proc.returncode == 0:
-            return out_dir / (tex_path.stem + ".pdf")
+    except (OSError, subprocess.TimeoutExpired):
         return None
+    if proc.returncode != 0:
+        return None
+    return out_dir / (tex_path.stem + ".pdf")
+
+
+def tex_to_pdf(tex_path: Path, out_dir: Path) -> Path | None:
+    """Compile a ``.tex`` file to PDF via remote API, then local engines.
+
+    Order: remote latex-on-http → ``tectonic`` → ``pdflatex``. Returns the
+    path to the produced PDF on first success, or ``None`` if every backend
+    failed. See module docstring for env-var configuration.
+    """
+    if not _latex_api_disabled():
+        out = _tex_to_pdf_remote(tex_path, out_dir)
+        if out and out.is_file():
+            return out
+    out = _tex_to_pdf_tectonic(tex_path, out_dir)
+    if out and out.is_file():
+        return out
+    out = _tex_to_pdf_pdflatex(tex_path, out_dir)
+    if out and out.is_file():
+        return out
     return None
+
+
+def probe_tex_pdf_backend() -> str:
+    """Return the name of the first backend ``tex_to_pdf`` will attempt.
+
+    Used by the CLI for a one-line startup banner. Mirrors the shape of
+    :func:`probe_md_pdf_backend`; values: ``"latex-on-http"``,
+    ``"tectonic"``, ``"pdflatex"``, or ``""`` when nothing is configured.
+    """
+    if not _latex_api_disabled():
+        return "latex-on-http"
+    if shutil.which("tectonic"):
+        return "tectonic"
+    if shutil.which("pdflatex"):
+        return "pdflatex"
+    return ""
 
 
 def slug_from_paths(job_slug: str, run_dir: Path) -> Path:

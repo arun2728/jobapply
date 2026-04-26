@@ -24,6 +24,11 @@ DEFAULT_BASE_URLS: dict[str, str] = {
     "openai": "https://api.openai.com/v1",
 }
 
+# Public latex-on-http instance (https://github.com/YtoTech/latex-on-http).
+# Self-host via Docker if you'd rather not send résumé content to a third party.
+DEFAULT_LATEX_API_URL = "https://latex.ytotech.com/builds/sync"
+DEFAULT_LATEX_API_TIMEOUT = 120.0
+
 
 class ProviderConfig(BaseModel):
     """Per-provider connection settings."""
@@ -31,6 +36,37 @@ class ProviderConfig(BaseModel):
     api_key: str | None = Field(None, description="Plaintext or env:VAR_NAME reference.")
     base_url: str | None = Field(None, description="Override base URL (Ollama, OpenAI-compatible).")
     model: str | None = Field(None, description="Default model id for this provider.")
+
+
+class LatexApiConfig(BaseModel):
+    """Settings for the LaTeX → PDF compile service.
+
+    The pipeline POSTs ``.tex`` content to a `latex-on-http`_ compatible
+    endpoint and writes the returned PDF bytes to disk. This avoids needing
+    a TeX installation on the runner. Local engines (``tectonic``,
+    ``pdflatex``) are still used as fallbacks when this is disabled or
+    unreachable.
+
+    .. _latex-on-http: https://github.com/YtoTech/latex-on-http
+    """
+
+    enabled: bool = Field(
+        True,
+        description="Try the remote LaTeX API before falling back to local engines.",
+    )
+    url: str = Field(
+        DEFAULT_LATEX_API_URL,
+        description="Compile endpoint (latex-on-http synchronous build URL).",
+    )
+    compiler: str = Field(
+        "pdflatex",
+        description="Engine the API should use: pdflatex | xelatex | lualatex | latexmk.",
+    )
+    timeout: float = Field(
+        DEFAULT_LATEX_API_TIMEOUT,
+        ge=1.0,
+        description="HTTP request timeout in seconds.",
+    )
 
 
 class AppConfig(BaseModel):
@@ -52,6 +88,10 @@ class AppConfig(BaseModel):
     providers: dict[str, ProviderConfig] = Field(
         default_factory=dict,
         description="Per-provider blocks: api_key, base_url, model.",
+    )
+    latex_api: LatexApiConfig = Field(
+        default_factory=LatexApiConfig,
+        description="Remote LaTeX compile service used by `tex_to_pdf`.",
     )
 
     def provider_config(self, name: str | None = None) -> ProviderConfig:
@@ -149,6 +189,32 @@ def openai_api_key() -> str | None:
 
 def ollama_base_url() -> str:
     return os.environ.get("OLLAMA_BASE_URL", DEFAULT_BASE_URLS["ollama"])
+
+
+# Env-var names consumed by `jobapply.nodes.render.tex_to_pdf`. Keeping the
+# rendering layer env-only avoids a hard dependency on the config module from
+# inside `nodes/`; the CLI bridges TOML config → env at startup.
+LATEX_API_ENV_URL = "JOBAPPLY_LATEX_API_URL"
+LATEX_API_ENV_DISABLE = "JOBAPPLY_LATEX_API_DISABLE"
+LATEX_API_ENV_COMPILER = "JOBAPPLY_LATEX_API_COMPILER"
+LATEX_API_ENV_TIMEOUT = "JOBAPPLY_LATEX_API_TIMEOUT"
+
+
+def apply_latex_api_env(cfg: AppConfig) -> None:
+    """Push ``cfg.latex_api`` values into env vars so render.py picks them up.
+
+    Pre-existing env vars take precedence so users can override the TOML
+    config from the shell without editing the file.
+    """
+    pairs = {
+        LATEX_API_ENV_URL: cfg.latex_api.url,
+        LATEX_API_ENV_DISABLE: "1" if not cfg.latex_api.enabled else "0",
+        LATEX_API_ENV_COMPILER: cfg.latex_api.compiler,
+        LATEX_API_ENV_TIMEOUT: str(cfg.latex_api.timeout),
+    }
+    for key, value in pairs.items():
+        if key not in os.environ:
+            os.environ[key] = value
 
 
 def load_dotenv_if_present(cwd: Path | None = None) -> None:

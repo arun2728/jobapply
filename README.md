@@ -8,7 +8,7 @@ Outputs per run:
 - `output/run-<timestamp>/jobs.csv` — Google-Sheets-friendly summary (one row per job, sorted by status + fit score)
 - `output/run-<timestamp>/jobs/<slug>/` — `job.json`, `resume.md`, `resume.tex`, `resume.pdf`, `cover_letter.md`, `cover_letter.tex`, `cover_letter.pdf`
 
-PDFs are always produced thanks to a three-tier fallback (`pandoc` → `weasyprint` → `fpdf2`); install pandoc or `pango` for nicer output. `tectonic` / `pdflatex` (when installed) additionally produce the styled LaTeX PDFs (`resume.pdf`, `cover_letter.pdf` from the LaTeX templates).
+PDFs are always produced. Markdown PDFs go through a three-tier fallback (`pandoc` → `weasyprint` → `fpdf2`); install pandoc or `pango` for nicer output. The styled LaTeX PDFs (`resume.pdf`, `cover_letter.pdf` rendered from the bundled LaTeX templates) are compiled via a remote [`latex-on-http`](https://github.com/YtoTech/latex-on-http) service by default, so no local TeX install is required — `tectonic` / `pdflatex` are still used as fallbacks if the API is disabled or unreachable.
 
 **Deduping & resume**
 
@@ -47,7 +47,16 @@ jobapply run --titles "Backend Engineer,ML Engineer" --skills "Python,Kubernetes
 
 ### PDF rendering
 
-Resumes and cover letters are always exported as PDFs. The CLI prints which backend is active at run start:
+Resumes and cover letters are always exported as PDFs through two independent pipelines. The CLI prints which backend each one will use at run start:
+
+```text
+Markdown PDF backend: weasyprint (good)
+LaTeX PDF backend:    latex-on-http (https://latex.ytotech.com/builds/sync)
+```
+
+#### Markdown → PDF (always available)
+
+Markdown copies of the resume and cover letter (`resume.md`, `cover_letter.md`) are rendered with a three-tier fallback. Tiers 2 and 3 ship with the package, so PDFs work out of the box.
 
 | Tier | Backend | Quality | Install |
 |------|---------|---------|---------|
@@ -55,7 +64,38 @@ Resumes and cover letters are always exported as PDFs. The CLI prints which back
 | 2 | [WeasyPrint](https://weasyprint.org/) | good HTML/CSS | `brew install pango` (Python deps installed automatically) |
 | 3 | [`fpdf2`](https://py-pdf.github.io/fpdf2/) | basic, pure Python | bundled — always works |
 
-Tiers 2 and 3 ship with the package, so PDFs work out of the box even without pandoc or LaTeX. The styled MTeck-themed LaTeX PDFs (`resume.pdf` / `cover_letter.pdf` from `*.tex`) require [Tectonic](https://tectonic-typesetting.github.io/) or `pdflatex` on `PATH`. Use `--no-pdf` to skip PDF generation entirely.
+#### LaTeX → PDF (no local TeX needed)
+
+The styled MTeck-themed LaTeX templates (`resume.tex`, `cover_letter.tex`) are compiled to PDF via a [`latex-on-http`](https://github.com/YtoTech/latex-on-http) HTTP API. By default `jobapply` POSTs the `.tex` content to the public instance at `latex.ytotech.com` and writes the returned PDF — **no Tectonic, MacTeX, or `pdflatex` install required**. Local engines are still tried as fallbacks.
+
+| Tier | Backend | Notes |
+|------|---------|-------|
+| 1 | [`latex-on-http`](https://github.com/YtoTech/latex-on-http) (remote) | Default. Configurable in `[latex_api]`; supports self-hosting (see below). |
+| 2 | [Tectonic](https://tectonic-typesetting.github.io/) | Used when API is disabled / unreachable. Auto-fetches missing TeX packages. |
+| 3 | `pdflatex` | Last-resort fallback (full TeX Live install). |
+
+Configure the LaTeX-PDF backend in `jobapply.toml`:
+
+```toml
+[latex_api]
+enabled  = true
+url      = "https://latex.ytotech.com/builds/sync"
+compiler = "pdflatex"   # pdflatex | xelatex | lualatex | latexmk
+timeout  = 120.0
+```
+
+Each setting can also be overridden at runtime via env vars: `JOBAPPLY_LATEX_API_URL`, `JOBAPPLY_LATEX_API_DISABLE`, `JOBAPPLY_LATEX_API_COMPILER`, `JOBAPPLY_LATEX_API_TIMEOUT` (env wins over TOML so shell overrides are non-destructive).
+
+**Self-host (recommended for privacy / reliability).** Your tailored `.tex` contains personal info; if you'd rather not send it to a third-party server, run the same image yourself:
+
+```bash
+docker run -d -p 8080:8080 yotools/latex-on-http
+# then in jobapply.toml:
+# [latex_api]
+# url = "http://localhost:8080/builds/sync"
+```
+
+To skip PDF generation entirely, pass `--no-pdf` to `jobapply run` / `jobapply resume`.
 
 ### Spreadsheet export
 

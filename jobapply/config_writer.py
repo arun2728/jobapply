@@ -11,9 +11,12 @@ from typing import Any
 
 from jobapply.config import (
     DEFAULT_BASE_URLS,
+    DEFAULT_LATEX_API_TIMEOUT,
+    DEFAULT_LATEX_API_URL,
     DEFAULT_MODELS,
     PROVIDER_NAMES,
     AppConfig,
+    LatexApiConfig,
     ProviderConfig,
 )
 
@@ -92,4 +95,41 @@ def render_config_toml(cfg: AppConfig) -> str:
     for name in PROVIDER_NAMES:
         pc = cfg.providers.get(name, ProviderConfig())
         out.append(_provider_block(name, pc))
+    out.append(_latex_api_block(cfg.latex_api))
     return "".join(out)
+
+
+def _latex_api_block(la: LatexApiConfig) -> str:
+    """Render the [latex_api] section.
+
+    Only emit the block if it diverges from defaults; otherwise leave it
+    commented so the file stays minimal for users who don't care.
+    """
+    is_default = (
+        la.enabled
+        and la.url == DEFAULT_LATEX_API_URL
+        and la.compiler == "pdflatex"
+        and la.timeout == DEFAULT_LATEX_API_TIMEOUT
+    )
+    header = (
+        "\n# LaTeX → PDF compile service. By default jobapply POSTs your\n"
+        "# tailored .tex to a hosted latex-on-http instance and writes the\n"
+        "# returned PDF — no local TeX install required. Falls back to\n"
+        "# `tectonic`/`pdflatex` if disabled or unreachable. Self-host with:\n"
+        "#   docker run -d -p 8080:8080 yotools/latex-on-http\n"
+    )
+    if is_default:
+        return (
+            header
+            + "# [latex_api]\n"
+            + "# enabled = true\n"
+            + f'# url = "{DEFAULT_LATEX_API_URL}"\n'
+            + '# compiler = "pdflatex"\n'
+            + f"# timeout = {DEFAULT_LATEX_API_TIMEOUT}\n"
+        )
+    lines = [header, "[latex_api]\n"]
+    lines.append(_kv("enabled", la.enabled))
+    lines.append(_kv("url", la.url))
+    lines.append(_kv("compiler", la.compiler))
+    lines.append(_kv("timeout", la.timeout))
+    return "".join(lines)

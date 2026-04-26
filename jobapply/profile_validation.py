@@ -246,3 +246,108 @@ def validate_profile_path(path: Path) -> list[ProfileIssue]:
             )
         ]
     return validate_profile_text(path.read_text(encoding="utf-8"))
+
+
+# --- Skill extraction ------------------------------------------------------ #
+#
+# Used by the resume-tailor agent to guarantee every profile skill ends up in
+# the rendered resume regardless of perceived job-relevance. Lives here so the
+# regex/heuristics that "understand" profile.md layout stay in one place.
+
+# Strips a leading ``**Category:**`` or ``**Category**:`` label so we can
+# operate on just the comma-separated skill list that follows.
+_CATEGORY_LABEL_RE = re.compile(r"^\*\*[^*]+?\*\*\s*:?\s*")
+
+
+def _split_top_level_commas(value: str) -> list[str]:
+    """Split on commas that are not nested inside parentheses or brackets.
+
+    Keeps tokens like ``Model Context Protocol (MCP)`` intact even if they
+    happen to contain commas inside the parens.
+    """
+    out: list[str] = []
+    depth = 0
+    buf: list[str] = []
+    for ch in value:
+        if ch in "([{":
+            depth += 1
+            buf.append(ch)
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+            buf.append(ch)
+        elif ch == "," and depth == 0:
+            piece = "".join(buf).strip()
+            if piece:
+                out.append(piece)
+            buf = []
+        else:
+            buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def extract_profile_skills(text: str) -> list[str]:
+    """Return every individual skill listed in ``## Skills`` of ``text``.
+
+    Handles the two shapes ``profile.md`` ships with:
+
+    1. Categorized bullets — ``- **Languages:** TypeScript, Python``
+    2. Bare bullets — ``- Kubernetes``
+
+    Also tolerates non-bullet lines, sub-bullets, and skills wrapped in
+    inline markdown (``*Python*``). Splits each line on top-level commas so
+    parenthesized tokens like ``Model Context Protocol (MCP)`` stay
+    intact. The result preserves the order skills appear in the profile and
+    is deduplicated case-insensitively (first occurrence wins, retaining
+    the user's original casing).
+    """
+    body = _section_body(text, "Skills")
+    if not body.strip():
+        return []
+
+    seen_lower: set[str] = set()
+    skills: list[str] = []
+
+    for raw in body.splitlines():
+        line = _strip_list_marker(raw)
+        if not line:
+            continue
+        line = _CATEGORY_LABEL_RE.sub("", line, count=1).strip()
+        if not line:
+            continue
+        for piece in _split_top_level_commas(line):
+            cleaned = piece.strip().strip("*_`").strip()
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen_lower:
+                continue
+            seen_lower.add(key)
+            skills.append(cleaned)
+    return skills
+
+
+def merge_skills_preserving_order(
+    primary: list[str], required: list[str]
+) -> list[str]:
+    """Return ``primary`` with any missing ``required`` items appended.
+
+    Match is case-insensitive so ``"python"`` and ``"Python"`` collide. The
+    casing in ``primary`` wins for entries already present; missing
+    entries are appended in their ``required`` order with their original
+    casing. Used by the resume-tailor agent to guarantee every profile
+    skill survives the LLM round-trip even if the model drops some.
+    """
+    have = {s.strip().lower() for s in primary if s.strip()}
+    out = [s for s in primary if s and s.strip()]
+    for s in required:
+        clean = s.strip()
+        if not clean:
+            continue
+        if clean.lower() in have:
+            continue
+        have.add(clean.lower())
+        out.append(clean)
+    return out

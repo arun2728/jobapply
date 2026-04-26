@@ -18,6 +18,7 @@ from jobapply.config import (
     PROVIDER_NAMES,
     AppConfig,
     ProviderConfig,
+    apply_latex_api_env,
     find_config_path,
     get_api_key,
     get_base_url,
@@ -28,7 +29,7 @@ from jobapply.config_writer import render_config_toml
 from jobapply.graph_nodes import bootstrap_resume_state
 from jobapply.models import JobSearchInput, LedgerStatus
 from jobapply.nodes.persist import write_jobs_csv_from_path
-from jobapply.nodes.render import probe_md_pdf_backend
+from jobapply.nodes.render import probe_md_pdf_backend, probe_tex_pdf_backend
 from jobapply.profile_import import (
     SUPPORTED_SUFFIXES,
     ResumeImportError,
@@ -474,6 +475,7 @@ def run(
     load_dotenv_if_present()
     root = Path.cwd()
     cfg = load_config(root)
+    apply_latex_api_env(cfg)
     if not yes:
         titles = titles or questionary.text("Job titles (comma-separated)").ask()
         skills = skills or questionary.text("Primary skills (comma-separated)", default="").ask()
@@ -547,11 +549,22 @@ def run(
         ),
         "none": "[red]none available[/red]",
     }[backend]
+    tex_backend = probe_tex_pdf_backend() or "none"
+    tex_backend_note = {
+        "latex-on-http": f"[green]latex-on-http[/green] ([dim]{cfg.latex_api.url}[/dim])",
+        "tectonic": "[green]tectonic[/green] (local)",
+        "pdflatex": "[green]pdflatex[/green] (local)",
+        "none": (
+            "[red]none available[/red] — enable [bold]latex_api[/bold] "
+            "in jobapply.toml or install tectonic/pdflatex"
+        ),
+    }[tex_backend]
     console.print(
         f"[bold]Run[/bold] {run_id} → {run_dir}\n"
         f"[dim]results_wanted={effective_results}  min_fit={effective_min_fit}  "
         f"sites={','.join(cfg.sites)}[/dim]\n"
-        f"[dim]PDF backend:[/dim] {backend_note}",
+        f"[dim]Markdown PDF backend:[/dim] {backend_note}\n"
+        f"[dim]LaTeX PDF backend:[/dim] {tex_backend_note}",
     )
     final_state = run_pipeline(
         initial, run_dir=run_dir, run_id=run_id, show_progress=True, console=console
@@ -590,6 +603,7 @@ def resume(
     load_dotenv_if_present()
     root = Path.cwd()
     cfg = load_config(root)
+    apply_latex_api_env(cfg)
     run_dir = root / (output_dir or cfg.output_dir) / run_name
     if not run_dir.is_dir():
         console.print(f"[red]Unknown run:[/red] {run_dir}")
