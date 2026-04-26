@@ -19,7 +19,11 @@ concurrency = 1
 sites = ["indeed", "linkedin", "google"]
 profile_path = "profile.md"
 output_dir = "output"
-# ledger_path = "/abs/path/to/ledger.db"   # default: ~/.jobapply/ledger.db
+# Path to the dedupe ledger. Default: `./.jobapply/ledger.db` (workspace-local
+# so each project keeps its own history). Use an absolute path or `~/...` if
+# you want a shared ledger across projects. Relative paths are resolved
+# against the workspace root.
+# ledger_path = "ledger.db"
 
 
 # --- Provider connection details -------------------------------------------

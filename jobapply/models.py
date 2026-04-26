@@ -16,6 +16,7 @@ class LedgerStatus(StrEnum):
     done = "done"
     skipped = "skipped"
     failed = "failed"
+    cached = "cached"
 
 
 class JobSearchInput(BaseModel):
@@ -149,6 +150,8 @@ class JobArtifacts(BaseModel):
     resume_latex_pdf: str | None = None
     cover_letter_md: str | None = None
     cover_letter_pdf: str | None = None
+    cover_letter_tex: str | None = None
+    cover_letter_latex_pdf: str | None = None
     networking_json: str | None = None
 
 

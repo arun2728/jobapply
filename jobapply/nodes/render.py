@@ -305,6 +305,121 @@ def render_cover_markdown(cl: CoverLetter) -> str:
     return str(tpl.render(cl=cl))
 
 
+# ----------------------------- cover letter LaTeX -------------------------------- #
+
+# Maximum height (in \height units) used by \raisebox before each glyph in the
+# cover-letter contact column. Phones look right slightly higher than envelopes.
+_COVER_LIFT = "-0.15"
+_COVER_LIFT_PHONE = "-0.05"
+
+
+def _cover_left_block(c: ContactInfo) -> str:
+    """Two-line phone + email column, top-left of the cover-letter header."""
+    lines: list[str] = []
+    if c.phone:
+        href, label = _normalize_phone(c.phone)
+        lines.append(
+            f"\\href{{{_url_escape(href)}}}{{"
+            f"\\raisebox{{{_COVER_LIFT_PHONE}\\height}} {_ICON['phone']}\\ "
+            f"{latex_escape(label)}}}"
+        )
+    if c.email:
+        href, label = _normalize_email(c.email)
+        lines.append(
+            f"\\href{{{_url_escape(href)}}}{{"
+            f"\\raisebox{{{_COVER_LIFT}\\height}} {_ICON['email']}\\ "
+            f"{latex_escape(label)}}}"
+        )
+    return " \\\\\n".join(lines)
+
+
+def _cover_right_block(c: ContactInfo) -> str:
+    """Right-aligned LinkedIn / Portfolio / GitHub / Medium / Twitter links."""
+    lines: list[str] = []
+    if c.linkedin:
+        href, _ = _normalize_via_regex(
+            c.linkedin, _LINKEDIN_RE, "https://linkedin.com/in/", "linkedin"
+        )
+        lines.append(f"LinkedIn: \\href{{{_url_escape(href)}}}{{link}}")
+    if c.portfolio:
+        href, _ = _normalize_portfolio(c.portfolio)
+        lines.append(f"Portfolio: \\href{{{_url_escape(href)}}}{{link}}")
+    if c.github:
+        href, _ = _normalize_via_regex(c.github, _GITHUB_RE, "https://github.com/", "github")
+        lines.append(f"GitHub: \\href{{{_url_escape(href)}}}{{link}}")
+    if c.medium:
+        href, _ = _normalize_via_regex(
+            c.medium, _MEDIUM_RE, "https://medium.com/@", "medium", keep_at_in_label=True
+        )
+        lines.append(f"Medium: \\href{{{_url_escape(href)}}}{{link}}")
+    if c.twitter:
+        href, _ = _normalize_via_regex(c.twitter, _TWITTER_RE, "https://twitter.com/", "twitter")
+        lines.append(f"Twitter: \\href{{{_url_escape(href)}}}{{link}}")
+    return " \\\\\n".join(lines)
+
+
+def _cover_body_paragraphs(opening: str, body: str) -> str:
+    """Escape and stitch the salutation + body paragraphs into LaTeX.
+
+    Paragraphs are split on blank lines and joined with blank lines, so the
+    template's ``\\setlength{\\parskip}{12pt}`` produces clean breaks.
+    """
+    chunks: list[str] = []
+    if opening and opening.strip():
+        chunks.append(latex_escape(opening.strip()))
+    if body and body.strip():
+        for para in re.split(r"\n\s*\n", body.strip()):
+            para = para.strip()
+            if not para:
+                continue
+            collapsed = re.sub(r"\s*\n\s*", " ", para)
+            chunks.append(latex_escape(collapsed))
+    return "\n\n".join(chunks)
+
+
+def _cover_closing_block(closing: str, name: str) -> str:
+    """Render the bottom signoff. Multi-line closings become ``\\\\``-joined."""
+    text = (closing or "").strip()
+    if not text:
+        text = f"Sincerely,\n{name.strip()}" if name.strip() else "Sincerely,"
+    lines = [latex_escape(line.strip()) for line in text.splitlines() if line.strip()]
+    if not lines:
+        return latex_escape("Sincerely,")
+    return " \\\\ ".join(lines)
+
+
+def fill_cover_letter_tex(
+    cover: CoverLetter,
+    *,
+    contact: ContactInfo,
+    name: str,
+    role: str,
+) -> str:
+    """Render :class:`CoverLetter` into the entry-level cover-letter LaTeX shell.
+
+    Uses ``contact`` from the tailored resume so phone / email / links match the
+    resume header. ``name`` is shown large in the center; ``role`` is the small
+    accent line beneath (typically the job title being applied to).
+    """
+    tex_path = _templates_dir() / "cover_letter.tex"
+    template = tex_path.read_text(encoding="utf-8")
+
+    safe_name = latex_escape(name.strip() or "Candidate")
+    safe_role = latex_escape(role.strip())
+    left = _cover_left_block(contact)
+    right = _cover_right_block(contact)
+    body = _cover_body_paragraphs(cover.opening, cover.body)
+    closing = _cover_closing_block(cover.closing, name)
+
+    out = template.replace("%%JOBAPPLY_NAME%%", safe_name)
+    out = out.replace("%%JOBAPPLY_ROLE%%", safe_role)
+    out = out.replace("%%JOBAPPLY_LEFT%%", left)
+    out = out.replace("%%JOBAPPLY_RIGHT%%", right)
+    out = out.replace("%%JOBAPPLY_BODY%%", body)
+    out = out.replace("%%JOBAPPLY_CLOSING%%", closing)
+    return out
+
+
 def fill_resume_tex(tr: TailoredResume) -> str:
     """Render :class:`TailoredResume` into the MTeck-styled LaTeX shell."""
     tex_path = _templates_dir() / "resume.tex"
@@ -331,7 +446,31 @@ def fill_resume_tex(tr: TailoredResume) -> str:
     return out
 
 
-def md_to_pdf(md_path: Path, pdf_path: Path) -> bool:
+# Minimal print stylesheet for the WeasyPrint markdown fallback. Mirrors a
+# typical resume / cover-letter layout: 1in margins, serif body, tight headings.
+_MD_PRINT_CSS = """
+@page { size: Letter; margin: 1in; }
+body {
+  font-family: "Charter", "Source Serif Pro", "Georgia", serif;
+  font-size: 10.5pt;
+  line-height: 1.35;
+  color: #111;
+}
+h1 { font-size: 22pt; margin: 0 0 4pt 0; color: #0e6e55; }
+h2 { font-size: 13pt; margin: 12pt 0 4pt 0; color: #0e6e55;
+     border-bottom: 1px solid #a16f0b; padding-bottom: 2pt; }
+h3 { font-size: 11pt; margin: 8pt 0 2pt 0; }
+p  { margin: 4pt 0; }
+ul { margin: 2pt 0 6pt 0; padding-left: 1.1em; }
+li { margin: 1pt 0; }
+a  { color: inherit; text-decoration: none; }
+hr { border: none; border-top: 1px solid #a16f0b; margin: 6pt 0; }
+strong { color: #111; }
+"""
+
+
+def _md_to_pdf_pandoc(md_path: Path, pdf_path: Path) -> bool:
+    """Try pandoc first — best layout when LaTeX is also installed."""
     try:
         import pypandoc
 
@@ -344,6 +483,119 @@ def md_to_pdf(md_path: Path, pdf_path: Path) -> bool:
         return pdf_path.is_file()
     except Exception:
         return False
+
+
+def _md_to_pdf_weasyprint(md_path: Path, pdf_path: Path) -> bool:
+    """Pure-Python fallback: markdown -> HTML -> PDF via WeasyPrint.
+
+    Avoids the pandoc / LaTeX dependency. Imports lazily so a missing
+    cairo/pango install only fails this single call instead of breaking
+    ``import jobapply``.
+    """
+    try:
+        import markdown as md_lib
+        from weasyprint import CSS, HTML
+    except Exception:
+        return False
+
+    try:
+        text = md_path.read_text(encoding="utf-8")
+        html_body = md_lib.markdown(
+            text,
+            extensions=["extra", "sane_lists", "smarty"],
+            output_format="html5",
+        )
+        html_doc = (
+            "<!doctype html><html><head><meta charset='utf-8'>"
+            f"<title>{md_path.stem}</title></head>"
+            f"<body>{html_body}</body></html>"
+        )
+        HTML(string=html_doc, base_url=str(md_path.parent)).write_pdf(
+            str(pdf_path),
+            stylesheets=[CSS(string=_MD_PRINT_CSS)],
+        )
+        return pdf_path.is_file()
+    except Exception:
+        return False
+
+
+def _md_to_pdf_fpdf2(md_path: Path, pdf_path: Path) -> bool:
+    """Last-resort fallback: markdown -> HTML -> PDF via ``fpdf2``.
+
+    ``fpdf2`` is pure Python with no native deps, so this path always works
+    when WeasyPrint can't load Pango/Cairo and pandoc isn't installed. The
+    output is plainer than WeasyPrint's but always renders.
+    """
+    try:
+        import markdown as md_lib
+        from fpdf import FPDF
+    except Exception:
+        return False
+
+    try:
+        text = md_path.read_text(encoding="utf-8")
+        html = md_lib.markdown(
+            text,
+            extensions=["extra", "sane_lists"],
+            output_format="html5",
+        )
+        pdf = FPDF(format="Letter", unit="pt")
+        pdf.set_margins(left=54, top=54, right=54)
+        pdf.set_auto_page_break(auto=True, margin=54)
+        pdf.add_page()
+        pdf.set_font("Helvetica", size=11)
+        pdf.write_html(html)
+        pdf.output(str(pdf_path))
+        return pdf_path.is_file()
+    except Exception:
+        return False
+
+
+def md_to_pdf(md_path: Path, pdf_path: Path) -> bool:
+    """Convert a markdown file to PDF, trying multiple backends in order.
+
+    1. ``pypandoc`` — best layout when pandoc + a LaTeX engine are installed.
+    2. WeasyPrint — high-quality HTML rendering; needs Pango/Cairo (system).
+    3. ``fpdf2`` — pure-Python last resort; always works.
+
+    Returns ``True`` on the first success, ``False`` if every backend fails.
+    """
+    if _md_to_pdf_pandoc(md_path, pdf_path):
+        return True
+    if _md_to_pdf_weasyprint(md_path, pdf_path):
+        return True
+    return _md_to_pdf_fpdf2(md_path, pdf_path)
+
+
+def probe_md_pdf_backend() -> str:
+    """Return the name of the first available markdown-to-PDF backend.
+
+    Used by the CLI to print a one-line hint at run start so users know
+    whether output will be high-quality (pandoc / weasyprint) or basic
+    (fpdf2). Returns ``""`` if nothing is available (extremely unlikely
+    since fpdf2 has no native deps).
+    """
+    try:
+        import pypandoc
+
+        pypandoc.get_pandoc_version()
+        return "pandoc"
+    except Exception:
+        pass
+    try:
+        from weasyprint import HTML
+
+        HTML(string="<p>probe</p>")  # trigger lazy lib loading
+        return "weasyprint"
+    except Exception:
+        pass
+    try:
+        from fpdf import FPDF
+
+        FPDF()
+        return "fpdf2"
+    except Exception:
+        return ""
 
 
 def tex_to_pdf(tex_path: Path, out_dir: Path) -> Path | None:

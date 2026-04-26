@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -24,7 +26,9 @@ from jobapply.config import (
 )
 from jobapply.config_writer import render_config_toml
 from jobapply.graph_nodes import bootstrap_resume_state
-from jobapply.models import JobSearchInput
+from jobapply.models import JobSearchInput, LedgerStatus
+from jobapply.nodes.persist import write_jobs_csv_from_path
+from jobapply.nodes.render import probe_md_pdf_backend
 from jobapply.profile_import import (
     SUPPORTED_SUFFIXES,
     ResumeImportError,
@@ -37,10 +41,81 @@ app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
 
 
-def _ledger_db_path(cfg: AppConfig) -> Path:
+def _ledger_db_path(cfg: AppConfig, cwd: Path | None = None) -> Path:
+    """Resolve the ledger path: explicit config value wins; otherwise default.
+
+    Relative ``cfg.ledger_path`` values are resolved against ``cwd`` so users
+    can write ``ledger_path = "ledger.db"`` and have it live next to
+    ``jobapply.toml``.
+    """
+    base = cwd or Path.cwd()
     if cfg.ledger_path:
-        return Path(cfg.ledger_path)
-    return Path.home() / ".jobapply" / "ledger.db"
+        path = Path(cfg.ledger_path).expanduser()
+        if not path.is_absolute():
+            path = base / path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+    return base / ".jobapply" / "ledger.db"
+
+
+def _print_run_summary(run_dir: Path, n_searched: int) -> None:
+    """Tally jobs.json by status and print a friendly summary.
+
+    Prints a clear hint when every job was deduped from the ledger so the user
+    knows why the run dir looks empty and how to re-run with ``--force``.
+    """
+    jobs_path = run_dir / "jobs.json"
+    if not jobs_path.is_file():
+        if n_searched == 0:
+            console.print("[yellow]No jobs returned by search.[/yellow]")
+        else:
+            console.print(
+                "[yellow]Search returned "
+                f"{n_searched} jobs, but none were processed.[/yellow] "
+                "[dim]Pass --force to ignore the ledger and re-process.[/dim]",
+            )
+        return
+    try:
+        data = json.loads(jobs_path.read_text(encoding="utf-8"))
+        records = data.get("jobs", [])
+    except (OSError, json.JSONDecodeError):
+        return
+    counts = Counter(str(r.get("status", "")) for r in records)
+    if not records:
+        return
+
+    table = Table(title=f"Run summary ({len(records)} jobs)", show_header=True)
+    table.add_column("Status", style="bold")
+    table.add_column("Count", justify="right")
+    order = [
+        LedgerStatus.done.value,
+        LedgerStatus.cached.value,
+        LedgerStatus.skipped.value,
+        LedgerStatus.failed.value,
+        LedgerStatus.pending.value,
+    ]
+    for status in order:
+        if counts.get(status):
+            table.add_row(status, str(counts[status]))
+    for status, n in counts.items():
+        if status not in order:
+            table.add_row(status, str(n))
+    console.print(table)
+
+    cached = counts.get(LedgerStatus.cached.value, 0)
+    if cached and counts.get(LedgerStatus.done.value, 0) == 0:
+        console.print(
+            f"[yellow]All {cached} jobs were already processed in earlier "
+            "runs.[/yellow] [dim]Re-run with `--force` to ignore the ledger, "
+            "or inspect `.jobapply/ledger.db` for prior artifact paths.[/dim]",
+        )
+
+    csv_path = write_jobs_csv_from_path(jobs_path, run_dir=run_dir)
+    if csv_path is not None:
+        console.print(
+            f"[green]Wrote[/green] {csv_path} "
+            "[dim](import into Google Sheets via File → Import)[/dim]"
+        )
 
 
 def _default_profile_text() -> str:
@@ -416,12 +491,27 @@ def run(
         "queue": [],
     }
     _validate_keys(cfg, prov)
+    backend = probe_md_pdf_backend() or "none"
+    backend_note = {
+        "pandoc": "[green]pandoc[/green] (high quality)",
+        "weasyprint": "[green]weasyprint[/green] (good)",
+        "fpdf2": (
+            "[yellow]fpdf2[/yellow] (basic — install [bold]pandoc[/bold] "
+            "or [bold]brew install pango[/bold] for nicer output)"
+        ),
+        "none": "[red]none available[/red]",
+    }[backend]
     console.print(
         f"[bold]Run[/bold] {run_id} → {run_dir}\n"
         f"[dim]results_wanted={effective_results}  min_fit={effective_min_fit}  "
-        f"sites={','.join(cfg.sites)}[/dim]",
+        f"sites={','.join(cfg.sites)}[/dim]\n"
+        f"[dim]PDF backend:[/dim] {backend_note}",
     )
-    run_pipeline(initial, run_dir=run_dir, run_id=run_id, show_progress=True, console=console)
+    final_state = run_pipeline(
+        initial, run_dir=run_dir, run_id=run_id, show_progress=True, console=console
+    )
+    n_searched = len(final_state.get("jobs_raw") or [])
+    _print_run_summary(run_dir, n_searched)
     console.print("[green]Finished.[/green]")
 
 
@@ -471,7 +561,11 @@ def resume(
     run_id = initial["run_id"]
     _validate_keys(cfg, str(initial["provider"]))
     console.print(f"[bold]Resume[/bold] {run_id} → {run_dir}")
-    run_pipeline(initial, run_dir=run_dir, run_id=run_id, show_progress=True, console=console)
+    final_state = run_pipeline(
+        initial, run_dir=run_dir, run_id=run_id, show_progress=True, console=console
+    )
+    n_searched = len(final_state.get("jobs_raw") or [])
+    _print_run_summary(run_dir, n_searched)
     console.print("[green]Finished resume.[/green]")
 
 

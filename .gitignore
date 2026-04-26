@@ -10,6 +10,7 @@ build/
 output/
 .env
 jobapply.toml
+.jobapply/
 *.sqlite
 .DS_Store
 profile.md

@@ -32,8 +32,16 @@ class JobLedgerEntry(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-def default_ledger_path() -> Path:
-    p = Path.home() / ".jobapply"
+def default_ledger_path(cwd: Path | None = None) -> Path:
+    """Workspace-local ledger at ``<cwd>/.jobapply/ledger.db``.
+
+    Keeping the ledger inside the project directory means each workspace has
+    its own dedupe history; collaborators / multiple checkouts won't clobber
+    each other and removing the project cleans up its state. Override via
+    ``ledger_path`` in ``jobapply.toml`` if you want a global ledger.
+    """
+    base = cwd or Path.cwd()
+    p = base / ".jobapply"
     p.mkdir(parents=True, exist_ok=True)
     return p / "ledger.db"
 

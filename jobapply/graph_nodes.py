@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from sqlmodel import Session
+
 from jobapply.agents.cover_letter import write_cover_letter
 from jobapply.agents.fit_scorer import score_fit
 from jobapply.agents.networking import write_networking
@@ -16,6 +18,7 @@ from jobapply.agents.search import search_jobs
 from jobapply.config import load_config
 from jobapply.graph_state import GraphState
 from jobapply.ledger import (
+    JobLedgerEntry,
     get_engine,
     init_db,
     should_skip,
@@ -33,6 +36,7 @@ from jobapply.models import (
 )
 from jobapply.nodes.persist import upsert_job_record, write_job_json
 from jobapply.nodes.render import (
+    fill_cover_letter_tex,
     fill_resume_tex,
     md_to_pdf,
     render_cover_markdown,
@@ -43,6 +47,19 @@ from jobapply.nodes.render import (
 from jobapply.run_meta import read_meta, write_meta
 from jobapply.utils import profile_hash as profile_hash_fn
 from jobapply.utils import slugify
+
+
+def _template_index_from_state(state: GraphState) -> JobsIndex:
+    """Build the empty JobsIndex header used to seed jobs.json."""
+    inp = JobSearchInput.model_validate(state["search_input"])
+    return JobsIndex(
+        run_id=state["run_id"],
+        search=inp,
+        profile_path=state["profile_path"],
+        provider=state["provider"],
+        model=state["model"],
+        jobs=[],
+    )
 
 
 def search_node(state: GraphState) -> dict[str, Any]:
@@ -76,11 +93,52 @@ def dedupe_node(state: GraphState) -> dict[str, Any]:
     init_db(engine)
     ph = state["profile_hash"]
     force = bool(state.get("force"))
+    run_dir = Path(state["run_dir"])
+    template_index = _template_index_from_state(state)
+
     raw_dicts = state.get("jobs_raw") or []
     queue: list[dict[str, Any]] = []
+    cached_records: list[dict[str, Any]] = []
+
     for d in raw_dicts:
         job = RawJob.model_validate(d)
         if not force and should_skip(engine, job.job_id, ph, skip_if_done=True):
+            with Session(engine) as session:
+                row = session.get(JobLedgerEntry, job.job_id)
+            paths_json: dict[str, Any] = {}
+            prior_status = LedgerStatus.cached
+            if row is not None:
+                if row.paths_json:
+                    try:
+                        paths_json = json.loads(row.paths_json)
+                    except json.JSONDecodeError:
+                        paths_json = {}
+                if row.status == LedgerStatus.skipped.value:
+                    prior_status = LedgerStatus.skipped
+            note = (
+                f"Already processed in {row.run_id} (status={row.status}); "
+                "pass --force to re-run."
+                if row is not None
+                else "Already in ledger; pass --force to re-run."
+            )
+            cached_rec = JobRecord(
+                job_id=job.job_id,
+                title=job.title,
+                company=job.company,
+                location=job.location,
+                description=(job.description or "")[:2000],
+                job_url=job.job_url,
+                apply_url=job.apply_url,
+                site=job.site,
+                status=prior_status,
+                artifacts=JobArtifacts.model_validate(
+                    {k: v for k, v in paths_json.items() if v},
+                ),
+                error=note,
+                processed_at=datetime.now(UTC),
+            )
+            upsert_job_record(run_dir, template_index, cached_rec)
+            cached_records.append(cached_rec.model_dump(mode="json"))
             continue
         upsert_pending(
             engine,
@@ -95,7 +153,18 @@ def dedupe_node(state: GraphState) -> dict[str, Any]:
             run_id=state["run_id"],
         )
         queue.append(job.model_dump(mode="json"))
-    return {"queue": queue, "log": [f"dedupe: {len(queue)} jobs to process"]}
+
+    log: list[str] = [f"dedupe: {len(queue)} jobs to process"]
+    if cached_records:
+        log.append(
+            f"dedupe: {len(cached_records)} jobs already in ledger "
+            "(written as cached; use --force to re-run them)",
+        )
+    return {
+        "queue": queue,
+        "results": cached_records,
+        "log": log,
+    }
 
 
 def process_one_node(state: GraphState) -> dict[str, Any]:
@@ -113,14 +182,7 @@ def process_one_node(state: GraphState) -> dict[str, Any]:
     min_fit = float(state.get("min_fit", 0.35))
     slug = slugify(job.title, job.company, job.job_id)
     job_dir = slug_from_paths(slug, run_dir)
-    template_index = JobsIndex(
-        run_id=state["run_id"],
-        search=inp,
-        profile_path=state["profile_path"],
-        provider=state["provider"],
-        model=state["model"],
-        jobs=[],
-    )
+    template_index = _template_index_from_state(state)
     write_job_json(job_dir, job.model_dump(mode="json"))
 
     try:
@@ -162,15 +224,24 @@ def process_one_node(state: GraphState) -> dict[str, Any]:
         (job_dir / "cover_letter.md").write_text(md_cover, encoding="utf-8")
         tex = fill_resume_tex(resume)
         (job_dir / "resume.tex").write_text(tex, encoding="utf-8")
+        cover_tex = fill_cover_letter_tex(
+            cover,
+            contact=resume.contact,
+            name=resume.document_title or "Candidate",
+            role=job.title,
+        )
+        (job_dir / "cover_letter.tex").write_text(cover_tex, encoding="utf-8")
 
         artifacts: dict[str, str | None] = {
             "job_json": str((job_dir / "job.json").resolve()),
             "resume_md": str((job_dir / "resume.md").resolve()),
             "resume_tex": str((job_dir / "resume.tex").resolve()),
             "cover_letter_md": str((job_dir / "cover_letter.md").resolve()),
+            "cover_letter_tex": str((job_dir / "cover_letter.tex").resolve()),
             "resume_pdf": None,
             "resume_latex_pdf": None,
             "cover_letter_pdf": None,
+            "cover_letter_latex_pdf": None,
             "networking_json": None,
         }
         if networking is not None:
@@ -188,6 +259,9 @@ def process_one_node(state: GraphState) -> dict[str, Any]:
             lp = tex_to_pdf(job_dir / "resume.tex", job_dir)
             if lp and lp.is_file():
                 artifacts["resume_latex_pdf"] = str(lp.resolve())
+            clp = tex_to_pdf(job_dir / "cover_letter.tex", job_dir)
+            if clp and clp.is_file():
+                artifacts["cover_letter_latex_pdf"] = str(clp.resolve())
 
         rec = JobRecord(
             job_id=job.job_id,
