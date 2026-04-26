@@ -132,6 +132,44 @@ def test_fpdf2_backend_renders_real_pdf_bytes(tmp_path: Path) -> None:
     assert pdf.stat().st_size > 500
 
 
+def test_weasyprint_probe_is_silent_and_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When WeasyPrint can't load Pango/Cairo, the probe must be silent
+    (no big banner on stderr) and must only run once across many calls.
+    """
+    import contextlib
+    import io
+
+    monkeypatch.setattr(render, "_weasyprint_probe_cache", None)
+
+    cap_err = io.StringIO()
+    cap_out = io.StringIO()
+    with contextlib.redirect_stderr(cap_err), contextlib.redirect_stdout(cap_out):
+        first = render._weasyprint_available()
+        # Sentinel: pretend the probe is not cached, then call again — but
+        # the cache mechanism should still kick in for the second loop.
+        for _ in range(5):
+            render._weasyprint_available()
+
+    assert isinstance(first, bool)
+    output = cap_err.getvalue() + cap_out.getvalue()
+    assert "could not import" not in output.lower(), output
+    assert render._weasyprint_probe_cache is first
+
+
+def test_weasyprint_md_call_uses_cached_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``_md_to_pdf_weasyprint`` must short-circuit when the probe says no,
+    so the WeasyPrint banner can't reappear on every per-job call.
+    """
+    monkeypatch.setattr(render, "_weasyprint_probe_cache", False)
+    md = tmp_path / "x.md"
+    md.write_text("# hi\n", encoding="utf-8")
+    pdf = tmp_path / "x.pdf"
+    assert render._md_to_pdf_weasyprint(md, pdf) is False
+    assert not pdf.exists()
+
+
 def test_weasyprint_backend_emits_pdf_bytes_when_installed(tmp_path: Path) -> None:
     """Real end-to-end render via WeasyPrint when cairo/pango are available.
 

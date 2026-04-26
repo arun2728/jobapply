@@ -34,6 +34,11 @@ from jobapply.profile_import import (
     ResumeImportError,
     import_resume_to_profile_md,
 )
+from jobapply.profile_validation import (
+    ProfileIssue,
+    validate_profile_path,
+    validate_profile_text,
+)
 from jobapply.runner import run_pipeline
 from jobapply.utils import profile_hash as profile_hash_fn
 
@@ -118,6 +123,40 @@ def _print_run_summary(run_dir: Path, n_searched: int) -> None:
         )
 
 
+def _report_profile_issues(
+    issues: list[ProfileIssue],
+    *,
+    profile_path: Path,
+    context: str,
+) -> bool:
+    """Print profile.md issues; return True when there are required gaps.
+
+    ``context`` is shown before the bullet list (e.g. "after import" or
+    "before this run"). The caller decides what to do with the truthy
+    return value (during ``init`` we just keep going; ``run``/``resume``
+    keep going too but the user has been clearly warned).
+    """
+    if not issues:
+        return False
+    required = [i for i in issues if i.is_required]
+    recommended = [i for i in issues if not i.is_required]
+    header_color = "red" if required else "yellow"
+    header_label = f"{len(required)} required" if required else f"{len(recommended)} recommended"
+    console.print(
+        f"\n[{header_color}]profile.md needs attention[/{header_color}] "
+        f"({header_label} — {context}, {profile_path})"
+    )
+    for issue in required:
+        console.print(f"  [red]•[/red] {issue.message}")
+    for issue in recommended:
+        console.print(f"  [yellow]•[/yellow] {issue.message}")
+    console.print(
+        "[dim]Edit the file above and re-run when ready. "
+        "Required gaps will produce empty resume sections.[/dim]"
+    )
+    return bool(required)
+
+
 def _default_profile_text() -> str:
     pkg_profile = Path(__file__).resolve().parent.parent / "profile.md"
     if pkg_profile.is_file():
@@ -176,6 +215,8 @@ def _import_profile_from_resume(
         return False
     target.write_text(text, encoding="utf-8")
     console.print(f"[green]Wrote[/green] {target} (imported from {resume_path.name})")
+    issues = validate_profile_text(text)
+    _report_profile_issues(issues, profile_path=target, context="after import")
     return True
 
 
@@ -459,6 +500,11 @@ def run(
         console.print(f"[red]Missing profile:[/red] {prof} (run `jobapply init`)")
         raise typer.Exit(1)
     profile_text = prof.read_text(encoding="utf-8")
+    _report_profile_issues(
+        validate_profile_text(profile_text),
+        profile_path=prof,
+        context="before this run",
+    )
     ph = profile_hash_fn(profile_text)
     run_id = f"run-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}"
     run_dir = root / effective_output / run_id
@@ -560,6 +606,13 @@ def resume(
         initial["with_networking"] = with_networking
     run_id = initial["run_id"]
     _validate_keys(cfg, str(initial["provider"]))
+    profile_str = str(initial.get("profile_path") or "")
+    if profile_str:
+        _report_profile_issues(
+            validate_profile_path(Path(profile_str)),
+            profile_path=Path(profile_str),
+            context="before this resume",
+        )
     console.print(f"[bold]Resume[/bold] {run_id} → {run_dir}")
     final_state = run_pipeline(
         initial, run_dir=run_dir, run_id=run_id, show_progress=True, console=console

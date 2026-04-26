@@ -73,12 +73,25 @@ class ProjectItem(BaseModel):
 
 
 class EducationItem(BaseModel):
-    """Single education entry rendered in the resume."""
+    """Single education entry rendered in the resume.
+
+    ``gpa`` and ``coursework`` are pulled out of the freeform ``details``
+    string so the LaTeX template can place them in the right slot
+    (GPA right of the degree, coursework on its own italic line).
+    ``details`` remains for backward compatibility / freeform notes that
+    don't fit the structured fields.
+    """
 
     school: str = ""
     degree: str = ""
     dates: str = ""
-    details: str = Field("", description="GPA, honors, coursework — single line.")
+    gpa: str = Field("", description="GPA value with scale, e.g. '9.6/10' or '3.85/4.0'.")
+    coursework: str = Field(
+        "", description="Comma-separated relevant coursework (no leading 'Course Work:')."
+    )
+    details: str = Field(
+        "", description="Freeform extras (honors, thesis title) when GPA/coursework don't fit."
+    )
 
 
 class ContactInfo(BaseModel):

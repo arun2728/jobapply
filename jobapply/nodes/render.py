@@ -276,13 +276,34 @@ def _projects_latex(projects: list[ProjectItem]) -> str:
 
 
 def _education_latex(education: list[EducationItem]) -> str:
+    """Render education entries in MTeck style.
+
+    Layout per entry::
+
+        \\headingBf{<school>}{<dates>}
+        \\headingIt{<degree>}{GPA: <gpa>}        % right cell shows GPA when present
+        \\headingIt{Course Work: <coursework>}{} % full-width line, only when set
+        \\headingIt{<details>}{}                  % only if no gpa/coursework filled it
+
+    Empty cells are still emitted (``\\headingIt{...}{}``) so the table-like
+    alignment matches the Experience section.
+    """
     if not education:
         return ""
     parts: list[str] = ["\\section{Education}"]
     for e in education:
         parts.append(rf"\headingBf{{{latex_escape(e.school)}}}{{{latex_escape(e.dates)}}}")
-        right = latex_escape(e.details)
+        right = ""
+        if e.gpa.strip():
+            right = rf"\textbf{{GPA:}} \textbf{{{latex_escape(e.gpa.strip())}}}"
+        elif e.details.strip() and not e.coursework.strip():
+            right = latex_escape(e.details.strip())
         parts.append(rf"\headingIt{{{latex_escape(e.degree)}}}{{{right}}}")
+        if e.coursework.strip():
+            parts.append(rf"\headingIt{{Course Work: {latex_escape(e.coursework.strip())}}}{{}}")
+        if e.details.strip() and e.gpa.strip() and not e.coursework.strip():
+            # GPA already took the right cell; surface details on its own line.
+            parts.append(rf"\headingIt{{{latex_escape(e.details.strip())}}}{{}}")
     return "\n".join(parts) + "\n"
 
 
@@ -421,13 +442,18 @@ def fill_cover_letter_tex(
 
 
 def fill_resume_tex(tr: TailoredResume) -> str:
-    """Render :class:`TailoredResume` into the MTeck-styled LaTeX shell."""
+    """Render :class:`TailoredResume` into the MTeck-styled LaTeX shell.
+
+    The Summary section is intentionally not rendered: it tends to read like
+    boilerplate marketing and is already covered by the cover letter. The
+    ``TailoredResume.summary`` field is still populated by the LLM and
+    consumed by the cover-letter agent for context.
+    """
     tex_path = _templates_dir() / "resume.tex"
     template = tex_path.read_text(encoding="utf-8")
     body = "\n".join(
         section
         for section in (
-            _summary_latex(tr.summary),
             _skills_latex(tr.skills),
             _experience_latex(tr.experience),
             _projects_latex(tr.projects),
@@ -469,6 +495,50 @@ strong { color: #111; }
 """
 
 
+_weasyprint_probe_cache: bool | None = None
+
+
+def _weasyprint_available() -> bool:
+    """Cache + silence WeasyPrint's import probe.
+
+    WeasyPrint's native loader prints a multi-line banner to stderr when
+    Pango/Cairo can't be loaded. Python re-runs failed imports on every
+    attempt, so without caching the banner shows up once per markdown-to-PDF
+    call (4× per job). We probe once with stdout/stderr suppressed and
+    remember the result.
+    """
+    global _weasyprint_probe_cache
+    if _weasyprint_probe_cache is not None:
+        return _weasyprint_probe_cache
+
+    import contextlib
+    import io
+    import logging
+
+    # WeasyPrint emits its banner via the ``weasyprint`` logger AND via stderr.
+    # Suppress both during the probe — failures still propagate as exceptions.
+    weasy_logger = logging.getLogger("weasyprint")
+    prior_level = weasy_logger.level
+    prior_propagate = weasy_logger.propagate
+    weasy_logger.setLevel(logging.CRITICAL + 1)
+    weasy_logger.propagate = False
+    try:
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            from weasyprint import HTML
+
+            HTML(string="<p>probe</p>")  # forces native lib resolution
+        _weasyprint_probe_cache = True
+    except Exception:
+        _weasyprint_probe_cache = False
+    finally:
+        weasy_logger.setLevel(prior_level)
+        weasy_logger.propagate = prior_propagate
+    return _weasyprint_probe_cache
+
+
 def _md_to_pdf_pandoc(md_path: Path, pdf_path: Path) -> bool:
     """Try pandoc first — best layout when LaTeX is also installed."""
     try:
@@ -488,10 +558,15 @@ def _md_to_pdf_pandoc(md_path: Path, pdf_path: Path) -> bool:
 def _md_to_pdf_weasyprint(md_path: Path, pdf_path: Path) -> bool:
     """Pure-Python fallback: markdown -> HTML -> PDF via WeasyPrint.
 
-    Avoids the pandoc / LaTeX dependency. Imports lazily so a missing
-    cairo/pango install only fails this single call instead of breaking
-    ``import jobapply``.
+    Avoids the pandoc / LaTeX dependency. Imports lazily and short-circuits
+    once we know the underlying Pango/Cairo libraries can't be loaded — this
+    keeps WeasyPrint's huge "could not import some external libraries"
+    banner from spamming the run output every time the tool falls back to
+    fpdf2.
     """
+    if not _weasyprint_available():
+        return False
+
     try:
         import markdown as md_lib
         from weasyprint import CSS, HTML
@@ -582,13 +657,8 @@ def probe_md_pdf_backend() -> str:
         return "pandoc"
     except Exception:
         pass
-    try:
-        from weasyprint import HTML
-
-        HTML(string="<p>probe</p>")  # trigger lazy lib loading
+    if _weasyprint_available():
         return "weasyprint"
-    except Exception:
-        pass
     try:
         from fpdf import FPDF
 

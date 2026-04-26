@@ -2,10 +2,6 @@
 
 {% if contact_md %}{{ contact_md }}{% elif tr.contact_line %}{{ tr.contact_line }}{% endif %}
 
-## Summary
-
-{{ tr.summary }}
-
 ## Skills
 
 {% for s in tr.skills %}- {{ s }}
@@ -36,6 +32,8 @@
 {% for ed in tr.education %}
 ### {{ ed.school }}{% if ed.dates %} ({{ ed.dates }}){% endif %}
 
-{% if ed.degree %}**{{ ed.degree }}**{% endif %}{% if ed.details %} — {{ ed.details }}{% endif %}
-
+{% if ed.degree %}**{{ ed.degree }}**{% endif %}{% if ed.gpa %} — GPA: {{ ed.gpa }}{% elif ed.details %} — {{ ed.details }}{% endif %}
+{% if ed.coursework %}
+*Course Work:* {{ ed.coursework }}
+{% endif %}
 {% endfor %}{% endif %}

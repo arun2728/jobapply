@@ -125,7 +125,11 @@ _PROFILE_TEMPLATE = """# Base profile (starter resume source)
 - **Project:** description
 
 ## Education
-- **School**, Degree, years
+
+### School | Degree | Start - End
+- **GPA:** 0.0/0.0
+- **Course Work:** Course A, Course B, Course C
+- **Honors / Notes:** (optional)
 """
 
 
@@ -133,10 +137,27 @@ _SYSTEM_PROMPT = (
     "You convert a candidate's existing resume into a clean Markdown profile "
     "used as the source of truth for downstream resume tailoring. "
     "Preserve every fact: do not invent employers, dates, metrics, schools, "
-    "or skills. Drop boilerplate, recruiter notes, and page numbers. "
+    "GPAs, or skills. Drop boilerplate, recruiter notes, and page numbers. "
     "Output ONLY the Markdown document, no commentary or code fences. "
     "Follow this exact section layout (omit a section only if the source has "
-    "absolutely no signal for it):\n\n"
+    "absolutely no signal for it).\n\n"
+    "FORMATTING rules (must follow):\n"
+    "- Keep the top-level `# Base profile (starter resume source)` H1.\n"
+    "- Keep the `## Header` H2 heading and put each contact field on its own "
+    "  bullet with the exact `- **Name:** ...` / `- **Email:** ...` / "
+    "  `- **Phone:** ...` / `- **Location:** ...` / `- **Links:** ...` "
+    "  shape. NEVER drop the leading dash, NEVER drop the `## Header` "
+    "  heading, and NEVER concatenate fields onto a single line.\n"
+    "- For the Links bullet, place each link on its own indented sub-bullet, "
+    "  e.g. `  - LinkedIn: <url>`, `  - GitHub: <url>`. Copy URLs verbatim.\n"
+    "- Use `## Skills (grouped)`, `## Experience`, `## Projects`, "
+    "  `## Education` for the remaining sections.\n\n"
+    "EDUCATION rules: for each school, capture GPA (with its scale, e.g. "
+    "'9.6/10' or '3.85/4.0') under a `**GPA:**` bullet, and list relevant "
+    "coursework (the exact course names from the source) under a "
+    "`**Course Work:**` bullet as a comma-separated list. If the source does "
+    "not mention GPA or coursework, omit just that bullet — never make up a "
+    "value.\n\n"
     f"{_PROFILE_TEMPLATE}"
 )
 

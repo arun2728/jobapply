@@ -29,9 +29,15 @@ def tailor_resume(
             "portfolio). Copy URLs verbatim; do not shorten them. Leave a field empty if absent. "
             "Also set contact_line to the same info as a single human-readable plain-text line "
             "(used as a fallback when the renderer can't draw icons).\n\n"
-            "EDUCATION: Populate education from the profile's Education section with school, "
-            "degree, dates, and a short details line (GPA, honors, or relevant coursework). "
-            "Leave education empty only if the profile truly contains no education info."
+            "SUMMARY: Still set `summary` (the cover-letter agent reads it for context). It is "
+            "NOT rendered in the resume itself.\n\n"
+            "EDUCATION: For each entry populate school, degree, dates, and split GPA + "
+            "coursework into the dedicated fields. `gpa` is the bare value with its scale, e.g. "
+            "'9.6/10' or '3.85/4.0' — DO NOT prefix it with 'GPA:' (the renderer adds that). "
+            "`coursework` is a comma-separated list of relevant courses with NO leading "
+            "'Course Work:' prefix (e.g. 'OS, ML, NLP, DBMS, Networking'). Use `details` only "
+            "for honors/thesis text that doesn't fit GPA or coursework. If the profile lacks "
+            "GPA or coursework, leave those fields empty rather than fabricating values."
         ),
     )
     user = HumanMessage(
