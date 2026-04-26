@@ -164,7 +164,7 @@ _SYSTEM_PROMPT = (
 
 def llm_rewrite_to_profile_md(llm: BaseChatModel, raw_text: str) -> str:
     """Ask the LLM to reformat ``raw_text`` into a profile.md document."""
-    user = HumanMessage(content=f"RESUME SOURCE TEXT:\n\n{raw_text[:30000]}")
+    user = HumanMessage(content=f"RESUME SOURCE TEXT:\n\n{raw_text}")
     response = llm.invoke([SystemMessage(content=_SYSTEM_PROMPT), user])
     content = response.content
     if isinstance(content, list):  # some providers return list-of-parts
