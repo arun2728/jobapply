@@ -1,82 +1,46 @@
-"""Tests for ``extract_profile_skills`` and ``merge_skills_preserving_order``.
+"""Tests for the profile skill helpers used by the resume-tailor agent.
 
-The resume-tailor agent relies on these helpers to guarantee every profile
-skill appears in the rendered resume, regardless of perceived job-relevance.
-The parser must handle the two ``profile.md`` shapes (categorized bullets
-and bare bullets), keep parenthesized tokens intact, and dedupe
-case-insensitively.
+The skill source has moved from the old ``profile.md`` ``## Skills`` section
+to ``Profile.skills`` (a flat list in ``profile.json``). We only need:
+
+* :func:`jobapply.profile.profile_skill_list` — to dedupe + strip the
+  list before passing it as the LLM-side "must include" set.
+* :func:`jobapply.profile_validation.merge_skills_preserving_order` — the
+  belt-and-suspenders merge that re-attaches missing profile skills to the
+  LLM's output.
 """
 
 from __future__ import annotations
 
-from jobapply.profile_validation import (
-    _split_top_level_commas,
-    extract_profile_skills,
-    merge_skills_preserving_order,
-)
+from jobapply.profile import Profile, profile_skill_list
+from jobapply.profile_validation import merge_skills_preserving_order
+
+# ---- profile_skill_list -------------------------------------------------- #
 
 
-def test_split_top_level_commas_keeps_paren_groups_intact() -> None:
-    out = _split_top_level_commas("Python, Model Context Protocol (MCP, alias), Kubernetes")
-    assert out == ["Python", "Model Context Protocol (MCP, alias)", "Kubernetes"]
-
-
-def test_split_top_level_commas_handles_unbalanced_parens() -> None:
-    # Stray ``)`` shouldn't make depth go negative and start swallowing commas.
-    out = _split_top_level_commas("A) , B, C")
-    assert out == ["A)", "B", "C"]
-
-
-def test_extract_profile_skills_categorized_bullets() -> None:
-    md = (
-        "# Header\n"
-        "**Name:** Test\n\n"
-        "## Skills\n"
-        "- **Languages:** TypeScript, Python\n"
-        "- **Frameworks:** Model Context Protocol (MCP)\n"
-        "- **Cloud / Infra:** AWS, Kubernetes\n\n"
-        "## Experience\n"
-        "- something\n"
+def test_profile_skill_list_strips_blank_and_dedupes_case_insensitively() -> None:
+    profile = Profile(
+        skills=[
+            "Python",
+            "  TypeScript  ",
+            "python",  # duplicate via case
+            "",  # blank dropped
+            "TypeScript",  # exact duplicate
+            "Model Context Protocol (MCP)",
+        ]
     )
-    assert extract_profile_skills(md) == [
-        "TypeScript",
+    assert profile_skill_list(profile) == [
         "Python",
+        "TypeScript",
         "Model Context Protocol (MCP)",
-        "AWS",
-        "Kubernetes",
     ]
 
 
-def test_extract_profile_skills_bare_bullets() -> None:
-    md = "## Skills\n- Python\n- TypeScript\n- Kubernetes\n"
-    assert extract_profile_skills(md) == ["Python", "TypeScript", "Kubernetes"]
+def test_profile_skill_list_returns_empty_when_no_skills() -> None:
+    assert profile_skill_list(Profile()) == []
 
 
-def test_extract_profile_skills_mixed_shapes_and_dedup() -> None:
-    md = (
-        "## Skills\n"
-        "- **Languages:** Python, TypeScript\n"
-        "- python\n"  # duplicate (case-insensitive) — must be dropped
-        "- *Go*\n"  # inline italic — markers stripped
-        "- **Cloud:** AWS, aws\n"  # duplicate inside same line
-    )
-    assert extract_profile_skills(md) == ["Python", "TypeScript", "Go", "AWS"]
-
-
-def test_extract_profile_skills_returns_empty_when_section_missing() -> None:
-    assert extract_profile_skills("# Resume\n\n## Experience\n- thing\n") == []
-
-
-def test_extract_profile_skills_returns_empty_when_section_blank() -> None:
-    assert extract_profile_skills("## Skills\n\n## Experience\n- thing\n") == []
-
-
-def test_extract_profile_skills_tolerates_section_suffix() -> None:
-    """``## Skills (grouped)`` must still match — same rule
-    ``_section_body`` already applies for validation.
-    """
-    md = "## Skills (grouped)\n- Python\n- Rust\n"
-    assert extract_profile_skills(md) == ["Python", "Rust"]
+# ---- merge_skills_preserving_order --------------------------------------- #
 
 
 def test_merge_skills_appends_missing_in_profile_order() -> None:

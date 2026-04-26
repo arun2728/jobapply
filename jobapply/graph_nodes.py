@@ -44,6 +44,7 @@ from jobapply.nodes.render import (
     slug_from_paths,
     tex_to_pdf,
 )
+from jobapply.profile import load_profile, profile_skill_list, profile_to_text
 from jobapply.run_meta import read_meta, write_meta
 from jobapply.utils import profile_hash as profile_hash_fn
 from jobapply.utils import slugify
@@ -116,8 +117,7 @@ def dedupe_node(state: GraphState) -> dict[str, Any]:
                 if row.status == LedgerStatus.skipped.value:
                     prior_status = LedgerStatus.skipped
             note = (
-                f"Already processed in {row.run_id} (status={row.status}); "
-                "pass --force to re-run."
+                f"Already processed in {row.run_id} (status={row.status}); pass --force to re-run."
                 if row is not None
                 else "Already in ledger; pass --force to re-run."
             )
@@ -210,7 +210,13 @@ def process_one_node(state: GraphState) -> dict[str, Any]:
                 "log": [f"skipped low fit: {job.title} ({fit.score:.2f})"],
             }
 
-        resume = tailor_resume(llm, profile_text=profile_text, job=job, skills=inp.skills)
+        resume = tailor_resume(
+            llm,
+            profile_text=profile_text,
+            job=job,
+            skills=inp.skills,
+            profile_skills=list(state.get("profile_skills") or []),
+        )
         update_status(engine, job.job_id, LedgerStatus.tailored, run_id=state["run_id"])
 
         cover = write_cover_letter(llm, profile_text=profile_text, job=job, resume=resume)
@@ -318,18 +324,27 @@ def process_one_node(state: GraphState) -> dict[str, Any]:
 
 
 def bootstrap_resume_state(run_dir: Path, ledger_db_path: Path) -> dict[str, Any]:
-    """Build initial graph state from meta.json for `jobapply resume`."""
+    """Build initial graph state from meta.json for `jobapply resume`.
+
+    Loads the structured ``profile.json`` referenced by the run meta and
+    derives both the agent-facing ``profile_text`` and the canonical
+    ``profile_skills`` list from it. Older runs that pointed at a
+    legacy ``profile.md`` are no longer supported — re-run
+    ``jobapply init`` to regenerate the JSON profile.
+    """
     meta = read_meta(run_dir)
     if not meta:
         raise FileNotFoundError(f"No meta.json in {run_dir}")
     profile_path = Path(meta["profile_path"])
-    profile_text = profile_path.read_text(encoding="utf-8")
+    profile = load_profile(profile_path)
+    profile_text = profile_to_text(profile)
     return {
         "run_id": meta["run_id"],
         "run_dir": str(run_dir.resolve()),
         "profile_path": str(profile_path.resolve()),
         "profile_text": profile_text,
         "profile_hash": profile_hash_fn(profile_text),
+        "profile_skills": profile_skill_list(profile),
         "provider": meta["provider"],
         "model": meta["model"],
         "min_fit": float(meta.get("min_fit", 0.35)),

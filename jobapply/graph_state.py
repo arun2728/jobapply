@@ -12,6 +12,7 @@ class GraphState(TypedDict, total=False):
     profile_path: str
     profile_text: str
     profile_hash: str
+    profile_skills: list[str]
     provider: str
     model: str
     min_fit: float

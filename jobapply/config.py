@@ -26,7 +26,7 @@ DEFAULT_MODELS: dict[str, str] = {
     # Workers AI's OpenAI-compatible endpoint accepts any model id from
     # https://developers.cloudflare.com/workers-ai/models/. The 8B Llama 3.1
     # is a sensible default — fast, free tier, supports tool/structured calls.
-    "cloudflare": "@cf/openai/gpt-oss-120b"
+    "cloudflare": "@cf/openai/gpt-oss-120b",
 }
 
 DEFAULT_BASE_URLS: dict[str, str] = {
@@ -125,7 +125,7 @@ class AppConfig(BaseModel):
     hours_old: int = Field(720, ge=0)
     concurrency: int = Field(1, ge=1, le=32)
     sites: list[str] = Field(default_factory=lambda: ["indeed", "linkedin", "google"])
-    profile_path: str = "profile.md"
+    profile_path: str = "profile.json"
     output_dir: str = "output"
     ledger_path: str | None = None
     providers: dict[str, ProviderConfig] = Field(

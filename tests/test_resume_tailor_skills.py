@@ -14,18 +14,29 @@ from typing import Any
 from jobapply.agents.resume_tailor import tailor_resume
 from jobapply.models import RawJob, TailoredResume
 
-PROFILE_MD = (
-    "# Header\n"
-    "**Name:** Test User\n"
-    "**Email:** test@example.com\n\n"
+PROFILE_TEXT = (
+    "# Profile\n"
+    "## Header\n"
+    "- **Name:** Test User\n"
+    "- **Email:** test@example.com\n\n"
     "## Skills\n"
-    "- **Languages:** TypeScript, Python\n"
-    "- **Frameworks:** Model Context Protocol (MCP)\n"
-    "- **Cloud / Infra:** AWS, Kubernetes\n\n"
+    "- TypeScript\n"
+    "- Python\n"
+    "- Model Context Protocol (MCP)\n"
+    "- AWS\n"
+    "- Kubernetes\n\n"
     "## Experience\n"
     "### Acme | Engineer | 2024 - Present\n"
     "- shipped things\n"
 )
+
+PROFILE_SKILLS = [
+    "TypeScript",
+    "Python",
+    "Model Context Protocol (MCP)",
+    "AWS",
+    "Kubernetes",
+]
 
 
 class _FakeStructured:
@@ -70,7 +81,13 @@ def test_tailor_resume_appends_missing_profile_skills() -> None:
     """
     llm = _FakeLLM(partial_skills=["Python", "Kubernetes"])
 
-    out = tailor_resume(llm, profile_text=PROFILE_MD, job=_job(), skills=["Python"])
+    out = tailor_resume(
+        llm,
+        profile_text=PROFILE_TEXT,
+        job=_job(),
+        skills=["Python"],
+        profile_skills=PROFILE_SKILLS,
+    )
 
     assert out.skills == [
         "Python",
@@ -94,7 +111,13 @@ def test_tailor_resume_keeps_full_set_when_llm_already_returned_all() -> None:
     ]
     llm = _FakeLLM(partial_skills=full)
 
-    out = tailor_resume(llm, profile_text=PROFILE_MD, job=_job(), skills=[])
+    out = tailor_resume(
+        llm,
+        profile_text=PROFILE_TEXT,
+        job=_job(),
+        skills=[],
+        profile_skills=PROFILE_SKILLS,
+    )
 
     assert out.skills == full
 
@@ -105,7 +128,13 @@ def test_tailor_resume_dedupes_case_insensitively() -> None:
     """
     llm = _FakeLLM(partial_skills=["python", "kubernetes"])
 
-    out = tailor_resume(llm, profile_text=PROFILE_MD, job=_job(), skills=[])
+    out = tailor_resume(
+        llm,
+        profile_text=PROFILE_TEXT,
+        job=_job(),
+        skills=[],
+        profile_skills=PROFILE_SKILLS,
+    )
 
     lowered = [s.lower() for s in out.skills]
     assert lowered.count("python") == 1
@@ -115,12 +144,30 @@ def test_tailor_resume_dedupes_case_insensitively() -> None:
     assert "AWS" in out.skills
 
 
-def test_tailor_resume_no_op_when_profile_has_no_skills_section() -> None:
-    """If profile lacks a Skills section, the LLM output is returned
-    unchanged (nothing to merge)."""
-    profile_no_skills = "# Header\n**Name:** Test\n\n## Experience\n- did things\n"
+def test_tailor_resume_no_op_when_profile_skills_omitted() -> None:
+    """When the caller doesn't pass ``profile_skills`` (or passes an empty
+    list) the LLM output is returned unchanged — there's nothing to merge."""
     llm = _FakeLLM(partial_skills=["Python"])
 
-    out = tailor_resume(llm, profile_text=profile_no_skills, job=_job(), skills=[])
+    out = tailor_resume(
+        llm,
+        profile_text="(no skills section)",
+        job=_job(),
+        skills=[],
+    )
+
+    assert out.skills == ["Python"]
+
+
+def test_tailor_resume_no_op_when_profile_skills_empty_list() -> None:
+    llm = _FakeLLM(partial_skills=["Python"])
+
+    out = tailor_resume(
+        llm,
+        profile_text="(no skills section)",
+        job=_job(),
+        skills=[],
+        profile_skills=[],
+    )
 
     assert out.skills == ["Python"]

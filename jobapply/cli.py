@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,21 +32,32 @@ from jobapply.graph_nodes import bootstrap_resume_state
 from jobapply.models import JobSearchInput, LedgerStatus
 from jobapply.nodes.persist import write_jobs_csv_from_path
 from jobapply.nodes.render import probe_md_pdf_backend, probe_tex_pdf_backend
+from jobapply.profile import (
+    Profile,
+    ProfileLoadError,
+    load_profile,
+    profile_skill_list,
+    profile_to_text,
+    save_profile,
+)
 from jobapply.profile_import import (
     SUPPORTED_SUFFIXES,
     ResumeImportError,
-    import_resume_to_profile_md,
+    extract_profile_from_resume,
+    extract_profile_from_text,
 )
 from jobapply.profile_validation import (
     ProfileIssue,
+    validate_profile,
     validate_profile_path,
-    validate_profile_text,
 )
 from jobapply.runner import run_pipeline
 from jobapply.utils import profile_hash as profile_hash_fn
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
+
+DEFAULT_PROFILE_FILENAME = "profile.json"
 
 
 def _ledger_db_path(cfg: AppConfig, cwd: Path | None = None) -> Path:
@@ -131,7 +143,7 @@ def _report_profile_issues(
     profile_path: Path,
     context: str,
 ) -> bool:
-    """Print profile.md issues; return True when there are required gaps.
+    """Print profile issues; return True when there are required gaps.
 
     ``context`` is shown before the bullet list (e.g. "after import" or
     "before this run"). The caller decides what to do with the truthy
@@ -145,7 +157,7 @@ def _report_profile_issues(
     header_color = "red" if required else "yellow"
     header_label = f"{len(required)} required" if required else f"{len(recommended)} recommended"
     console.print(
-        f"\n[{header_color}]profile.md needs attention[/{header_color}] "
+        f"\n[{header_color}]profile.json needs attention[/{header_color}] "
         f"({header_label} — {context}, {profile_path})"
     )
     for issue in required:
@@ -157,21 +169,6 @@ def _report_profile_issues(
         "Required gaps will produce empty resume sections.[/dim]"
     )
     return bool(required)
-
-
-def _default_profile_text() -> str:
-    pkg_profile = Path(__file__).resolve().parent.parent / "profile.md"
-    if pkg_profile.is_file():
-        return pkg_profile.read_text(encoding="utf-8")
-    return "# Your Name\n\nReplace this with your real profile.\n"
-
-
-def _write_profile(target: Path, force: bool) -> None:
-    if target.is_file() and not force:
-        console.print(f"[yellow]Skip[/yellow] existing {target}")
-        return
-    target.write_text(_default_profile_text(), encoding="utf-8")
-    console.print(f"[green]Wrote[/green] {target}")
 
 
 def _validate_resume_path(raw: str) -> Path | None:
@@ -192,13 +189,45 @@ def _validate_resume_path(raw: str) -> Path | None:
     return expanded
 
 
-def _import_profile_from_resume(
+def _read_pasted_resume() -> str:
+    """Read pasted resume text from stdin. Empty string if user bailed.
+
+    Uses :func:`questionary.text` with ``multiline=True`` when stdin is a
+    TTY so users get the standard editor affordance; otherwise we drain
+    stdin (``cat resume.txt | jobapply init --paste``).
+    """
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+    answer = questionary.text(
+        (
+            "Paste your resume below. "
+            "Press Esc then Enter (or Meta+Enter) when finished, "
+            "or leave blank to abort."
+        ),
+        multiline=True,
+        default="",
+    ).ask()
+    if answer is None:
+        raise typer.Exit(1)
+    return str(answer)
+
+
+def _save_imported_profile(profile: Profile, target: Path) -> None:
+    """Write ``profile`` to ``target`` and report any validation issues."""
+    save_profile(profile, target)
+    console.print(f"[green]Wrote[/green] {target}")
+    issues = validate_profile(profile)
+    _report_profile_issues(issues, profile_path=target, context="after import")
+
+
+def _import_profile_from_path(
     resume_path: Path,
-    target: Path,
     cfg: AppConfig,
+    target: Path,
+    *,
     force: bool,
 ) -> bool:
-    """Convert ``resume_path`` to ``target`` profile.md. Returns True on success."""
+    """Convert ``resume_path`` to ``target`` profile.json. Returns True on success."""
     if (
         target.is_file()
         and not force
@@ -211,14 +240,39 @@ def _import_profile_from_resume(
         return False
     console.print(f"[dim]Importing {resume_path.name}…[/dim]")
     try:
-        text = import_resume_to_profile_md(resume_path, cfg)
+        profile = extract_profile_from_resume(resume_path, cfg)
     except ResumeImportError as exc:
         console.print(f"[red]Resume import failed:[/red] {exc}")
         return False
-    target.write_text(text, encoding="utf-8")
-    console.print(f"[green]Wrote[/green] {target} (imported from {resume_path.name})")
-    issues = validate_profile_text(text)
-    _report_profile_issues(issues, profile_path=target, context="after import")
+    _save_imported_profile(profile, target)
+    return True
+
+
+def _import_profile_from_paste(
+    resume_text: str,
+    cfg: AppConfig,
+    target: Path,
+    *,
+    force: bool,
+) -> bool:
+    """Convert pasted ``resume_text`` to ``target`` profile.json."""
+    if (
+        target.is_file()
+        and not force
+        and not questionary.confirm(
+            f"{target.name} already exists. Overwrite with imported resume?",
+            default=False,
+        ).ask()
+    ):
+        console.print(f"[yellow]Skip[/yellow] {target} (kept existing)")
+        return False
+    console.print("[dim]Importing pasted resume text…[/dim]")
+    try:
+        profile = extract_profile_from_text(resume_text, cfg)
+    except ResumeImportError as exc:
+        console.print(f"[red]Resume import failed:[/red] {exc}")
+        return False
+    _save_imported_profile(profile, target)
     return True
 
 
@@ -308,13 +362,6 @@ def _interactive_config(existing: AppConfig | None) -> AppConfig:
     current = base.provider_config(provider)
     new_pc = _ask_provider_settings(provider, current)
 
-    profile_path = (
-        questionary.text(
-            "Path to your starter profile",
-            default=base.profile_path,
-        ).ask()
-        or base.profile_path
-    )
     output_dir = (
         questionary.text(
             "Output directory",
@@ -325,6 +372,15 @@ def _interactive_config(existing: AppConfig | None) -> AppConfig:
 
     providers = dict(base.providers)
     providers[provider] = new_pc
+
+    # Migrate legacy `profile.md` configs to the new JSON filename so the
+    # next `init` writes profile.json AND the toml points at it. Custom
+    # paths that aren't the literal default are preserved — power users who
+    # set `profile_path = "candidates/jane.json"` keep their override.
+    profile_path = base.profile_path
+    if not profile_path or profile_path.strip().lower() == "profile.md":
+        profile_path = DEFAULT_PROFILE_FILENAME
+
     return AppConfig(
         provider=provider,
         model=base.model,
@@ -345,29 +401,125 @@ def _persist_config(cfg: AppConfig, path: Path) -> None:
     console.print(f"[green]Wrote[/green] {path}")
 
 
+def _run_resume_import(
+    cfg: AppConfig,
+    profile_target: Path,
+    *,
+    resume_path: str | None,
+    paste_flag: bool,
+    force: bool,
+    non_interactive: bool,
+) -> bool:
+    """Drive the resume → profile.json import.
+
+    Honors three input shapes, in priority order:
+
+    1. ``--resume`` (file path).
+    2. ``--paste`` (drain stdin OR open the multiline editor).
+    3. Interactive prompts: ask for a path; if blank, fall back to a paste
+       prompt. One of the two MUST resolve to non-empty input.
+
+    Returns True iff a profile.json was successfully written. Raises
+    :class:`typer.Exit` if the user cancels in interactive mode without
+    providing a usable resume — ``init`` is not allowed to finish without
+    one.
+    """
+    if resume_path:
+        chosen = _validate_resume_path(resume_path)
+        if chosen is None:
+            console.print(
+                "[red]--resume points at an unusable path.[/red] "
+                "Re-run `jobapply init` with a valid file.",
+            )
+            raise typer.Exit(1)
+        return _import_profile_from_path(chosen, cfg, profile_target, force=force)
+
+    if paste_flag:
+        text = _read_pasted_resume()
+        if not text.strip():
+            console.print(
+                "[red]No resume text received via --paste.[/red] "
+                "Pipe text on stdin or rerun without --paste.",
+            )
+            raise typer.Exit(1)
+        return _import_profile_from_paste(text, cfg, profile_target, force=force)
+
+    if non_interactive:
+        console.print(
+            "[red]A resume is required.[/red] Pass --resume PATH or --paste "
+            "(or rerun without --non-interactive for the prompts).",
+        )
+        raise typer.Exit(1)
+
+    # Interactive: ask for a file first, fall back to paste if blank.
+    while True:
+        answer = questionary.text(
+            "Path to your resume "
+            f"({'/'.join(SUPPORTED_SUFFIXES)}; press Enter to paste text instead)",
+            default="",
+        ).ask()
+        if answer is None:
+            raise typer.Exit(1)
+        if answer.strip():
+            chosen = _validate_resume_path(answer)
+            if chosen is None:
+                # The validator already explained why; re-prompt.
+                continue
+            return _import_profile_from_path(chosen, cfg, profile_target, force=force)
+
+        text = _read_pasted_resume()
+        if text.strip():
+            return _import_profile_from_paste(text, cfg, profile_target, force=force)
+
+        console.print(
+            "[red]A resume is required.[/red] Provide a file path or paste "
+            "your resume text. (Ctrl+C to abort.)",
+        )
+
+
 @app.command()
 def init(
-    force: bool = typer.Option(False, "--force", help="Overwrite existing profile/jobapply.toml"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite existing profile.json/jobapply.toml without confirmation.",
+    ),
     non_interactive: bool = typer.Option(
         False,
         "--non-interactive",
-        help="Skip prompts and write a default jobapply.toml template.",
+        help=(
+            "Skip interactive provider prompts and write a default jobapply.toml. "
+            "Still requires --resume or --paste so a profile.json is produced."
+        ),
     ),
     resume_path: str | None = typer.Option(
         None,
         "--resume",
         "-r",
         help=(
-            "Optional path to an existing resume "
+            "Path to your resume "
             f"({', '.join(SUPPORTED_SUFFIXES)}). "
-            "If set, profile.md is generated from it (LLM rewrite when an API key is configured)."
+            "The configured LLM extracts profile.json from it."
+        ),
+    ),
+    paste: bool = typer.Option(
+        False,
+        "--paste",
+        help=(
+            "Read resume text from stdin (or open a multiline prompt) instead "
+            "of reading a file. Useful when you don't have a file handy."
         ),
     ),
 ) -> None:
-    """Interactively set up provider credentials and starter profile."""
+    """Configure your provider and import your resume into ``profile.json``.
+
+    A resume is mandatory: pass ``--resume PATH``, ``--paste`` (with text on
+    stdin or via the interactive editor), or answer the interactive prompts.
+    The configured LLM is invoked once to populate the JSON schema, so make
+    sure your provider credentials work before you run ``init``.
+    """
     load_dotenv_if_present()
     root = Path.cwd()
-    profile_target = root / "profile.md"
     cfg_path = find_config_path(root)
 
     cfg: AppConfig
@@ -395,25 +547,26 @@ def init(
             cfg = _interactive_config(existing)
             _persist_config(cfg, cfg_path)
 
-    imported = False
-    chosen: Path | None = None
-    if resume_path:
-        chosen = _validate_resume_path(resume_path)
-    elif not non_interactive:
-        answer = questionary.text(
-            "Path to an existing resume to import "
-            f"({'/'.join(SUPPORTED_SUFFIXES)}, blank to skip)",
-            default="",
-        ).ask()
-        if answer is None:
-            raise typer.Exit(1)
-        chosen = _validate_resume_path(answer)
+    profile_target = Path(cfg.profile_path or DEFAULT_PROFILE_FILENAME)
+    if not profile_target.is_absolute():
+        profile_target = root / profile_target
 
-    if chosen is not None:
-        imported = _import_profile_from_resume(chosen, profile_target, cfg, force=force)
+    imported = _run_resume_import(
+        cfg,
+        profile_target,
+        resume_path=resume_path,
+        paste_flag=paste,
+        force=force,
+        non_interactive=non_interactive,
+    )
 
     if not imported:
-        _write_profile(profile_target, force=force)
+        console.print(
+            "[red]profile.json was not written.[/red] Re-run `jobapply init` "
+            "with a valid resume so future `jobapply run` commands have data "
+            "to work with.",
+        )
+        raise typer.Exit(1)
 
     if non_interactive:
         console.print(
@@ -494,7 +647,7 @@ def run(
     profile_path: str | None = typer.Option(
         None,
         "--profile",
-        help="Override jobapply.toml `profile_path`.",
+        help="Override jobapply.toml `profile_path` (must be a profile.json file).",
     ),
     output_dir: str | None = typer.Option(
         None,
@@ -542,12 +695,15 @@ def run(
     effective_output = output_dir or cfg.output_dir
 
     prof = Path(effective_profile)
-    if not prof.is_file():
-        console.print(f"[red]Missing profile:[/red] {prof} (run `jobapply init`)")
-        raise typer.Exit(1)
-    profile_text = prof.read_text(encoding="utf-8")
+    try:
+        profile = load_profile(prof)
+    except ProfileLoadError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    profile_text = profile_to_text(profile)
+    canonical_skills = profile_skill_list(profile)
     _report_profile_issues(
-        validate_profile_text(profile_text),
+        validate_profile(profile),
         profile_path=prof,
         context="before this run",
     )
@@ -571,6 +727,7 @@ def run(
         "profile_path": str(prof.resolve()),
         "profile_text": profile_text,
         "profile_hash": ph,
+        "profile_skills": canonical_skills,
         "provider": prov,
         "model": mdl,
         "min_fit": effective_min_fit,

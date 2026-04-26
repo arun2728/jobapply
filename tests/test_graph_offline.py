@@ -90,8 +90,11 @@ def test_graph_processes_one_job(
     run_dir = tmp_path / "run-test"
     run_dir.mkdir(parents=True)
     ledger = tmp_path / "ledger.db"
-    prof = tmp_path / "profile.md"
-    prof.write_text("# Me\nPython expert.\n", encoding="utf-8")
+    prof = tmp_path / "profile.json"
+    prof.write_text(
+        '{"name": "Me", "email": "me@example.com", "skills": ["Python"]}',
+        encoding="utf-8",
+    )
     inp = JobSearchInput(titles=["Python"], skills=["Python"], location="Remote")
     initial: dict[str, Any] = {
         "run_id": "run-test",
@@ -99,6 +102,7 @@ def test_graph_processes_one_job(
         "profile_path": str(prof.resolve()),
         "profile_text": prof.read_text(encoding="utf-8"),
         "profile_hash": "deadbeef",
+        "profile_skills": ["Python"],
         "provider": "gemini",
         "model": "fake",
         "min_fit": 0.1,

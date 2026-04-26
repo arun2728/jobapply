@@ -51,8 +51,11 @@ def _initial_state(
 ) -> dict[str, Any]:
     run_dir = tmp_path / "run-cached"
     run_dir.mkdir(parents=True, exist_ok=True)
-    prof = tmp_path / "profile.md"
-    prof.write_text("# Me\nPython.\n", encoding="utf-8")
+    prof = tmp_path / "profile.json"
+    prof.write_text(
+        '{"name": "Me", "email": "me@example.com", "skills": ["Python"]}',
+        encoding="utf-8",
+    )
     inp = JobSearchInput(titles=["Python"], skills=["Python"], location="Remote")
     return {
         "run_id": "run-cached",
@@ -60,6 +63,7 @@ def _initial_state(
         "profile_path": str(prof.resolve()),
         "profile_text": prof.read_text(encoding="utf-8"),
         "profile_hash": profile_hash,
+        "profile_skills": ["Python"],
         "provider": "gemini",
         "model": "fake",
         "min_fit": 0.1,

@@ -1,6 +1,6 @@
 # JobApply
 
-Open-source CLI to **search jobs** ([JobSpy](https://github.com/speedyapply/python-jobspy): Indeed, LinkedIn, Google Jobs, etc.), then run a **LangGraph** pipeline that scores fit, **tailors your resume** and **writes a cover letter** from `profile.md` using **Gemini**, **Anthropic**, **OpenAI** (and any OpenAI-compatible gateway), **Ollama**, or **Cloudflare Workers AI** (structured outputs via LangChain).
+Open-source CLI to **search jobs** ([JobSpy](https://github.com/speedyapply/python-jobspy): Indeed, LinkedIn, Google Jobs, etc.), then run a **LangGraph** pipeline that scores fit, **tailors your resume** and **writes a cover letter** from a structured `profile.json` using **Gemini**, **Anthropic**, **OpenAI** (and any OpenAI-compatible gateway), **Ollama**, or **Cloudflare Workers AI** (structured outputs via LangChain).
 
 Outputs per run:
 
@@ -12,7 +12,7 @@ PDFs are always produced. Markdown PDFs go through a three-tier fallback (`pando
 
 **Deduping & resume**
 
-- Workspace-local ledger at `./.jobapply/ledger.db` (gitignored) skips jobs already completed for the same `profile.md` hash. Override with `ledger_path = "..."` in `jobapply.toml` if you want a shared/global ledger.
+- Workspace-local ledger at `./.jobapply/ledger.db` (gitignored) skips jobs already completed for the same `profile.json` hash. Override with `ledger_path = "..."` in `jobapply.toml` if you want a shared/global ledger.
 - Re-runs that hit the ledger emit a `cached` `JobRecord` into `jobs.json` so the run dir is never empty. Pass `--force` to ignore the ledger and re-process everything.
 - Each run stores `meta.json` (search snapshot). `jobapply resume run-...` skips network search and rebuilds the work queue from `meta.json` + ledger (by default removes `checkpoint.sqlite` so processing restarts cleanly after failures).
 
@@ -22,15 +22,77 @@ PDFs are always produced. Markdown PDFs go through a three-tier fallback (`pando
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-jobapply init           # interactive: pick provider, paste keys, choose model
-# Optional: import an existing resume instead of editing profile.md by hand:
-# jobapply init --resume ~/Downloads/resume.pdf   # .md / .txt / .docx / .pdf
-# edit profile.md if needed
+# Interactive setup. A resume is mandatory: pass --resume PATH or paste it in.
+jobapply init --resume ~/Downloads/resume.pdf   # .md / .txt / .docx / .pdf
+# Or paste resume text directly when you don't have a file:
+# jobapply init --paste
 
 jobapply run --titles "Backend Engineer,ML Engineer" --skills "Python,Kubernetes" --location "Remote" --yes
 ```
 
-`jobapply init` writes (or updates) `jobapply.toml` and starter `profile.md`. Use `jobapply config` later to change provider/credentials, or `jobapply config --show` to print the resolved config.
+`jobapply init` writes `jobapply.toml` and a structured `profile.json` extracted from your resume by the configured LLM. Open `profile.json` to fine-tune any field (name/email/links, experience bullets, skills, education entries with GPA & coursework, projects, etc.) — every key in the [`Profile` schema](jobapply/profile.py) maps 1:1 to what the resume tailor sees. Use `jobapply config` later to change provider/credentials, or `jobapply config --show` to print the resolved config.
+
+> Heads-up: `jobapply init` always calls your configured LLM to populate `profile.json`. Make sure your provider's API key works (or run an Ollama server locally) before invoking it. There is no Markdown fallback — the JSON is the source of truth.
+
+### `profile.json` schema
+
+The full Pydantic schema lives in [`jobapply/profile.py`](jobapply/profile.py). At a glance:
+
+```jsonc
+{
+  "name": "Jane Doe",
+  "email": "jane@example.com",
+  "phone": "+1 555 123 4567",
+  "location": "San Francisco, CA",
+
+  "portfolio": "https://jane.dev",
+  "github": "janedev",                  // bare handle or full URL
+  "linkedin": "https://linkedin.com/in/janedev",
+  "medium": "",
+  "twitter": "",
+  "other_links": [
+    { "label": "Dev.to", "url": "https://dev.to/janedev" }
+  ],
+
+  "summary": "Engineer with 5 yoe in distributed systems.",
+  "skills": ["Python", "Kubernetes", "Model Context Protocol (MCP)"],
+
+  "experience": [
+    {
+      "company": "Acme",
+      "role": "Senior Engineer",
+      "location": "Remote",
+      "start_date": "2024",
+      "end_date": "Present",
+      "bullets": ["Cut p99 latency 4×", "Led migration to gRPC"]
+    }
+  ],
+
+  "projects": [
+    {
+      "name": "openai-tools",
+      "description": "Tiny CLI for OpenAI function calling.",
+      "url": "https://github.com/janedev/openai-tools",
+      "tech": ["Python", "Click"],
+      "bullets": ["1.2k stars", "Used by Acme internally"]
+    }
+  ],
+
+  "education": [
+    {
+      "school": "MIT",
+      "degree": "B.S. CS",
+      "start_date": "2018",
+      "end_date": "2022",
+      "gpa": "3.85/4.0",
+      "coursework": ["Operating Systems", "Machine Learning"],
+      "honors": "Dean's list"
+    }
+  ]
+}
+```
+
+Empty list / empty string fields are allowed; the CLI prints required-vs-recommended warnings (`name`, `email`, `experience`, `education` are required) but never blocks the run.
 
 ### Configuration
 
@@ -117,7 +179,7 @@ After every run, `jobapply` writes `output/run-<id>/jobs.csv` with one row per j
 
 | Command | Description |
 |---------|-------------|
-| `jobapply init` | Interactive setup: provider + connection details + starter `profile.md`. Pass `--resume <path>` (`.md` / `.txt` / `.docx` / `.pdf`, including LinkedIn PDF export) to auto-generate `profile.md` from an existing resume — the configured LLM cleans it up; without a key it falls back to embedding the raw text. `--non-interactive` writes a blank template. |
+| `jobapply init` | Interactive setup: provider + connection details + structured `profile.json`. **A resume is required**: pass `--resume <path>` (`.md` / `.txt` / `.docx` / `.pdf`, including LinkedIn PDF export) or `--paste` (read text from stdin / multiline prompt). The configured LLM extracts the resume into the [`Profile` schema](jobapply/profile.py) via structured output, so make sure your provider key is reachable before running it. `--non-interactive` skips provider prompts but still requires `--resume` or `--paste`. |
 | `jobapply config` | Re-run the provider prompts; `--show` prints the resolved config |
 | `jobapply run` | Full pipeline (prompts unless `--yes`) |
 | `jobapply resume <run-name>` | Continue from `meta.json` (default: reset checkpoint) |
@@ -139,7 +201,7 @@ Bundled LaTeX templates:
 - `jobapply/templates/resume.tex` — adapted from Michael Lustfield's MTeck resume, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/legalcode.txt).
 - `jobapply/templates/cover_letter.tex` — adapted from Jayesh Sanwal's entry-level cover-letter template (CC BY 4.0).
 
-Your `profile.md` content remains yours.
+Your `profile.json` content remains yours.
 
 ## Contributing
 

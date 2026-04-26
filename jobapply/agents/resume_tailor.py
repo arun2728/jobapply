@@ -6,10 +6,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from jobapply.models import RawJob, TailoredResume
-from jobapply.profile_validation import (
-    extract_profile_skills,
-    merge_skills_preserving_order,
-)
+from jobapply.profile_validation import merge_skills_preserving_order
 
 
 def tailor_resume(
@@ -18,10 +15,18 @@ def tailor_resume(
     profile_text: str,
     job: RawJob,
     skills: list[str],
+    profile_skills: list[str] | None = None,
 ) -> TailoredResume:
+    """Build a :class:`TailoredResume` for ``job`` from ``profile_text``.
+
+    ``profile_skills`` is the canonical, deduplicated list of every skill on
+    the candidate's :class:`Profile`. Pass it from the caller (the graph
+    node loads it from ``profile.json``); when ``None`` we skip the
+    "guarantee every profile skill survives" merge step entirely.
+    """
     structured = llm.with_structured_output(TailoredResume)
     jd = (job.description or "")[:12000]
-    profile_skills = extract_profile_skills(profile_text)
+    canonical_skills: list[str] = profile_skills or []
     sys = SystemMessage(
         content=(
             "You rewrite the candidate's resume content for THIS job. "
@@ -55,7 +60,7 @@ def tailor_resume(
         ),
     )
     profile_skill_line = (
-        ", ".join(profile_skills) if profile_skills else "(profile has no Skills section)"
+        ", ".join(canonical_skills) if canonical_skills else "(profile has no skills)"
     )
     user = HumanMessage(
         content=(
@@ -70,10 +75,10 @@ def tailor_resume(
     assert isinstance(result, TailoredResume)
 
     # Belt-and-suspenders: even with explicit prompting, models occasionally
-    # drop "irrelevant" skills. Re-merge so the rendered resume is guaranteed
-    # to contain every profile skill, in the order the LLM ranked plus any
-    # missing ones appended in profile order.
-    if profile_skills:
-        result.skills = merge_skills_preserving_order(result.skills, profile_skills)
+    # drop "irrelevant" skills. Re-merge against the canonical list so the
+    # rendered resume is guaranteed to contain every profile skill, in the
+    # order the LLM ranked plus any missing ones appended in profile order.
+    if canonical_skills:
+        result.skills = merge_skills_preserving_order(result.skills, canonical_skills)
 
     return result

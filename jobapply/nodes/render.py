@@ -128,12 +128,12 @@ def _icon_block(href: str, icon: str, label: str, raise_height: str = "-0.15") -
     """Render a single ``\\href{...}{\\raisebox{...} <icon>\\ <label>}`` entry."""
     safe_url = _url_escape(href)
     safe_label = latex_escape(label)
-    return f"\\href{{{safe_url}}}" f"{{\\raisebox{{{raise_height}\\height}} {icon}\\ {safe_label}}}"
+    return f"\\href{{{safe_url}}}{{\\raisebox{{{raise_height}\\height}} {icon}\\ {safe_label}}}"
 
 
 def _location_block(value: str) -> str:
     """Plain-text location with an icon, no hyperlink."""
-    return f"\\raisebox{{-0.15\\height}} {_ICON['location']}\\ " f"{latex_escape(value.strip())}"
+    return f"\\raisebox{{-0.15\\height}} {_ICON['location']}\\ {latex_escape(value.strip())}"
 
 
 def build_contact_subtitle(c: ContactInfo) -> str:
@@ -229,7 +229,7 @@ def _summary_latex(summary: str) -> str:
     if not summary.strip():
         return ""
     return (
-        "\\section{Summary}\n" f"\\hspace{{10pt}}{latex_escape(summary.strip())}\n\\vspace{{2pt}}\n"
+        f"\\section{{Summary}}\n\\hspace{{10pt}}{latex_escape(summary.strip())}\n\\vspace{{2pt}}\n"
     )
 
 

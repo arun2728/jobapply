@@ -1,14 +1,16 @@
-"""Convert an existing resume into a `profile.md` the rest of the CLI can read.
+"""Convert an existing resume into a structured :class:`Profile`.
 
 Supports plain text formats (``.md``, ``.txt``), Word ``.docx`` files, and any
 PDF (LinkedIn's "Save to PDF" export is just a normal PDF). For ``.doc`` we
 ask the user to convert to ``.docx`` because the legacy binary format would
 require a fragile native dependency.
 
-When an LLM is configured for the active provider we ask it to reshape the
-extracted text into the same section layout as the bundled template so the
-downstream resume-tailoring agent has consistent inputs. Without an API key
-we fall back to writing the raw text under a generated header.
+The CLI also lets users paste resume text directly (``--paste`` /
+``init`` interactive fallback), in which case we skip the file-reading
+step. Either path ends in :func:`extract_profile_from_text`, which asks
+the configured LLM to fill out the :class:`Profile` schema via
+``with_structured_output``. There is no markdown fallback any more — a
+working LLM is required at ``init`` time.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from typing import TYPE_CHECKING
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from jobapply.config import AppConfig, get_api_key
+from jobapply.profile import Profile
 
 if TYPE_CHECKING:  # pragma: no cover - import for type hints only
     from langchain_core.language_models.chat_models import BaseChatModel
@@ -28,7 +31,7 @@ SUPPORTED_SUFFIXES: tuple[str, ...] = (".md", ".txt", ".docx", ".pdf")
 
 
 class ResumeImportError(RuntimeError):
-    """Raised when a resume file can't be read or converted."""
+    """Raised when a resume can't be read or converted into a Profile."""
 
 
 def _read_text_file(path: Path) -> str:
@@ -96,141 +99,133 @@ def extract_text_from_resume(path: Path) -> str:
             "Legacy .doc isn't supported. Open the file and re-save as .docx, then retry.",
         )
     raise ResumeImportError(
-        f"Unsupported resume format '{suffix}'. " f"Use one of: {', '.join(SUPPORTED_SUFFIXES)}.",
+        f"Unsupported resume format '{suffix}'. Use one of: {', '.join(SUPPORTED_SUFFIXES)}.",
     )
-
-
-_PROFILE_TEMPLATE = """# Base profile (starter resume source)
-
-## Header
-- **Name:**
-- **Email:**
-- **Phone:**
-- **Location:**
-- **Links:**
-
-## Summary
-
-## Skills (grouped)
-- **Languages:**
-- **Frameworks:**
-- **Cloud / Infra:**
-
-## Experience
-
-### Company | Role | Start - End
-- bullet
-
-## Projects
-- **Project:** description
-
-## Education
-
-### School | Degree | Start - End
-- **GPA:** 0.0/0.0
-- **Course Work:** Course A, Course B, Course C
-- **Honors / Notes:** (optional)
-"""
 
 
 _SYSTEM_PROMPT = (
-    "You convert a candidate's existing resume into a clean Markdown profile "
-    "used as the source of truth for downstream resume tailoring. "
-    "Preserve every fact: do not invent employers, dates, metrics, schools, "
-    "GPAs, or skills. Drop boilerplate, recruiter notes, and page numbers. "
-    "Output ONLY the Markdown document, no commentary or code fences. "
-    "Follow this exact section layout (omit a section only if the source has "
-    "absolutely no signal for it).\n\n"
-    "FORMATTING rules (must follow):\n"
-    "- Keep the top-level `# Base profile (starter resume source)` H1.\n"
-    "- Keep the `## Header` H2 heading and put each contact field on its own "
-    "  bullet with the exact `- **Name:** ...` / `- **Email:** ...` / "
-    "  `- **Phone:** ...` / `- **Location:** ...` / `- **Links:** ...` "
-    "  shape. NEVER drop the leading dash, NEVER drop the `## Header` "
-    "  heading, and NEVER concatenate fields onto a single line.\n"
-    "- For the Links bullet, place each link on its own indented sub-bullet, "
-    "  e.g. `  - LinkedIn: <url>`, `  - GitHub: <url>`. Copy URLs verbatim.\n"
-    "- Use `## Skills (grouped)`, `## Experience`, `## Projects`, "
-    "  `## Education` for the remaining sections.\n\n"
-    "EDUCATION rules: for each school, capture GPA (with its scale, e.g. "
-    "'9.6/10' or '3.85/4.0') under a `**GPA:**` bullet, and list relevant "
-    "coursework (the exact course names from the source) under a "
-    "`**Course Work:**` bullet as a comma-separated list. If the source does "
-    "not mention GPA or coursework, omit just that bullet — never make up a "
-    "value.\n\n"
-    f"{_PROFILE_TEMPLATE}"
+    "You convert a candidate's existing resume into a STRUCTURED JSON "
+    "profile. The schema you produce will be the source of truth for "
+    "downstream resume tailoring, so accuracy beats embellishment.\n\n"
+    "RULES (must follow):\n"
+    "- Preserve every fact verbatim: do not invent employers, dates, "
+    "metrics, schools, GPAs, links, or skills. If the source doesn't "
+    "mention something, leave that field empty rather than guessing.\n"
+    "- Drop boilerplate like recruiter notes, page numbers, and watermarks.\n"
+    "- Copy URLs and email addresses character-for-character; do NOT "
+    "shorten them.\n"
+    "- Classify each link by host into the dedicated fields: a github.com "
+    "URL goes into `github`, linkedin.com into `linkedin`, medium.com into "
+    "`medium`, twitter.com or x.com into `twitter`, and a personal site "
+    "into `portfolio`. Anything else goes into `other_links` with a short "
+    "human-readable label. Bare usernames are also acceptable for the "
+    "named fields (e.g. `linkedin: 'jane-doe'`).\n"
+    "- `skills` is a FLAT list of distinct skills. Do not nest, "
+    "categorize, or duplicate; if the source groups them ('Languages: "
+    "Python, Go'), unwrap the group and add each skill on its own. "
+    "Preserve parenthesized aliases such as 'Model Context Protocol "
+    "(MCP)'.\n"
+    "- For each `experience` entry: split the date range into "
+    "`start_date` and `end_date` (use 'Present' for current roles). "
+    "Convert the bullet points into the `bullets` list, one bullet per "
+    "entry, lightly cleaned (no leading dashes).\n"
+    "- For each `education` entry: split the date range, capture GPA in "
+    "the `gpa` field with its scale (e.g. '9.6/10' or '3.85/4.0') and "
+    "split coursework into a list. Use `honors` for awards / thesis text.\n"
+    "- For each `project`: pull a one-line summary into `description`, "
+    "the canonical link into `url`, and the tech stack into `tech` "
+    "(separate from `bullets`).\n"
+    "- The `summary` field is the candidate's existing professional "
+    "summary verbatim (or the most relevant equivalent). If the resume "
+    "has no summary, leave it empty.\n"
 )
 
 
-def llm_rewrite_to_profile_md(llm: BaseChatModel, raw_text: str) -> str:
-    """Ask the LLM to reformat ``raw_text`` into a profile.md document."""
+def llm_extract_profile(llm: BaseChatModel, raw_text: str) -> Profile:
+    """Ask the LLM to populate a :class:`Profile` from ``raw_text``.
+
+    Uses ``with_structured_output(Profile)`` so providers that support
+    function/tool calling return a directly-validated Pydantic instance.
+    Wrapped exceptions surface as :class:`ResumeImportError` for the CLI.
+    """
+    structured = llm.with_structured_output(Profile)
     user = HumanMessage(content=f"RESUME SOURCE TEXT:\n\n{raw_text}")
-    response = llm.invoke([SystemMessage(content=_SYSTEM_PROMPT), user])
-    content = response.content
-    if isinstance(content, list):  # some providers return list-of-parts
-        content = "".join(part if isinstance(part, str) else str(part) for part in content)
-    text = str(content).strip()
-    if text.startswith("```"):
-        # Strip a stray ```markdown ... ``` fence if the model adds one.
-        lines = text.splitlines()
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    if not text.endswith("\n"):
-        text += "\n"
-    return text
+    try:
+        result = structured.invoke([SystemMessage(content=_SYSTEM_PROMPT), user])
+    except Exception as exc:  # noqa: BLE001 - re-raise as a single CLI error type
+        raise ResumeImportError(
+            f"LLM structured-output extraction failed "
+            f"({type(exc).__name__}: {exc}). Re-run `jobapply init` once your "
+            "provider is reachable.",
+        ) from exc
+    if not isinstance(result, Profile):
+        raise ResumeImportError(
+            f"LLM returned {type(result).__name__}, expected a Profile. "
+            "The provider's structured-output support may be broken — try a "
+            "different model or provider.",
+        )
+    return result
 
 
-def _fallback_profile_md(source_path: Path, raw_text: str) -> str:
-    """Produce a usable profile.md without an LLM by embedding the raw text."""
-    body = raw_text.strip() or "(empty resume)"
-    return (
-        "# Base profile (starter resume source)\n\n"
-        f"_Imported from `{source_path.name}` — no LLM key was configured, so the "
-        "raw text is included verbatim. Edit the sections below before running "
-        "`jobapply run`._\n\n"
-        "## Raw resume text\n\n"
-        f"{body}\n"
-    )
+def _ensure_llm_factory(
+    cfg: AppConfig,
+    llm_factory: Callable[[AppConfig, str, str], BaseChatModel] | None,
+) -> Callable[[AppConfig, str, str], BaseChatModel]:
+    """Return ``llm_factory`` or build the default one lazily."""
+    if llm_factory is not None:
+        return llm_factory
+    from jobapply.llm import create_chat_model
+
+    def _default_factory(c: AppConfig, p: str, m: str) -> BaseChatModel:
+        return create_chat_model(p, m, cfg=c)
+
+    return _default_factory
 
 
-def import_resume_to_profile_md(
+def extract_profile_from_text(
+    raw_text: str,
+    cfg: AppConfig,
+    *,
+    llm_factory: Callable[[AppConfig, str, str], BaseChatModel] | None = None,
+) -> Profile:
+    """Ask the configured provider to turn ``raw_text`` into a :class:`Profile`.
+
+    ``cfg`` must point at a provider with a working API key (or be
+    ``ollama``). Otherwise we raise immediately with a message telling the
+    user how to configure one.
+    """
+    if not raw_text or not raw_text.strip():
+        raise ResumeImportError(
+            "Resume text is empty. Paste your resume content or pass a "
+            "non-empty file via --resume.",
+        )
+
+    provider = cfg.provider
+    if provider != "ollama" and not get_api_key(cfg, provider):
+        raise ResumeImportError(
+            f"No API key configured for provider '{provider}'. Run "
+            "`jobapply config` (or set the matching env var) before "
+            "running `jobapply init` so the resume can be parsed into "
+            "profile.json.",
+        )
+
+    factory = _ensure_llm_factory(cfg, llm_factory)
+    model = cfg.resolved_model(provider)
+    llm = factory(cfg, provider, model)
+    return llm_extract_profile(llm, raw_text)
+
+
+def extract_profile_from_resume(
     resume_path: Path,
     cfg: AppConfig,
     *,
     llm_factory: Callable[[AppConfig, str, str], BaseChatModel] | None = None,
-) -> str:
-    """Convert ``resume_path`` to profile.md text, using the configured LLM when possible.
-
-    ``llm_factory`` is injectable for testing. Default: build via ``create_chat_model``.
-    """
+) -> Profile:
+    """Read ``resume_path`` and convert it to a :class:`Profile` via the LLM."""
     raw_text = extract_text_from_resume(resume_path)
     if not raw_text.strip():
         raise ResumeImportError(
             f"Could not extract any text from {resume_path}. "
             "If it's a scanned PDF, try a Markdown or DOCX export instead.",
         )
-
-    provider = cfg.provider
-    if provider == "ollama" or get_api_key(cfg, provider):
-        if llm_factory is None:
-            from jobapply.llm import create_chat_model
-
-            def _default_factory(c: AppConfig, p: str, m: str) -> BaseChatModel:
-                return create_chat_model(p, m, cfg=c)
-
-            llm_factory = _default_factory
-        model = cfg.resolved_model(provider)
-        try:
-            llm = llm_factory(cfg, provider, model)
-            return llm_rewrite_to_profile_md(llm, raw_text)
-        except Exception as exc:  # noqa: BLE001 - degrade gracefully
-            raise ResumeImportError(
-                f"LLM rewrite failed ({type(exc).__name__}: {exc}). "
-                "Re-run `jobapply init` with the resume path once your provider is reachable, "
-                "or skip the import and edit profile.md by hand.",
-            ) from exc
-
-    return _fallback_profile_md(resume_path, raw_text)
+    return extract_profile_from_text(raw_text, cfg, llm_factory=llm_factory)
