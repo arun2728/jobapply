@@ -1,16 +1,109 @@
-% Minimal LaTeX resume shell (MIT). Filled by jobapply render node.
-\documentclass[10pt]{article}
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
-\usepackage[hidelinks]{hyperref}
-\usepackage[margin=0.75in]{geometry}
+%%%%
+% jobapply LaTeX resume shell.
+%
+% Styling adapted from MTecknology's Resume by Michael Lustfield (CC-BY-4.0).
+% Original: https://github.com/MTecknology/resume
+%
+% jobapply/nodes/render.py substitutes three placeholders inside this file:
+% the document title, the subtitle (contact line), and the body. The exact
+% placeholder strings are intentionally not repeated in this comment so that
+% they never collide with substitution.
+%%%%
+
+\documentclass[letterpaper,10pt]{article}
+
+% Dependencies
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
 \usepackage{enumitem}
-\setlist[itemize]{leftmargin=*,nosep,topsep=2pt}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage{fontawesome5}
+\usepackage{multicol}
+\usepackage{bookmark}
+\usepackage{lastpage}
+
+% Fonts (serif)
+\usepackage{CormorantGaramond}
+\usepackage{charter}
+
+% Accent colors
+\usepackage{xcolor}
+\definecolor{accentTitle}{HTML}{0e6e55}
+\definecolor{accentText}{HTML}{0e6e55}
+\definecolor{accentLine}{HTML}{a16f0b}
+
+% Page chrome
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\urlstyle{same}
+
+% Margins / spacing
+\addtolength{\oddsidemargin}{-0.7in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1.19in}
+\addtolength{\topmargin}{-0.7in}
+\addtolength{\textheight}{1.4in}
+
+\setlength{\multicolsep}{-3.0pt}
+\setlength{\columnsep}{-1pt}
+\setlength{\tabcolsep}{0pt}
+\setlength{\footskip}{3.7pt}
+\raggedbottom
+\raggedright
+
+% ATS readability
+\input{glyphtounicode}
+\pdfgentounicode=1
+
+%-----------------%
+% Custom commands %
+%-----------------%
+
+\newcommand{\documentTitle}[2]{
+  \begin{center}
+    {\Huge\color{accentTitle} #1}
+    \vspace{10pt}
+    {\color{accentLine} \hrule}
+    \vspace{2pt}
+    \footnotesize{#2}
+    \vspace{2pt}
+    {\color{accentLine} \hrule}
+  \end{center}
+}
+
+\titleformat{\section}{
+  \vspace{-5pt}
+  \color{accentText}
+  \raggedright\large\bfseries
+}{}{0em}{}[\color{accentLine}\titlerule]
+
+\newcommand{\heading}[2]{
+  \hspace{10pt}#1\hfill#2\\
+}
+\newcommand{\headingBf}[2]{
+  \heading{\textbf{#1}}{\textbf{#2}}
+}
+\newcommand{\headingIt}[2]{
+  \heading{\textit{#1}}{\textit{#2}}
+}
+
+\newenvironment{resume_list}{
+  \vspace{-7pt}
+  \begin{itemize}[itemsep=-2px, parsep=1pt, leftmargin=30pt]
+}{
+  \end{itemize}
+}
+
+\renewcommand\labelitemi{--}
+
 \begin{document}
-\begin{center}
-{\LARGE %%JOBAPPLY_TITLE%%}\\[0.35em]
-{\small %%JOBAPPLY_SUBTITLE%%}
-\end{center}
-\vspace{0.75em}
+
+\documentTitle{%%JOBAPPLY_TITLE%%}{%%JOBAPPLY_SUBTITLE%%}
+
 %%JOBAPPLY_BODY%%
+
 \end{document}

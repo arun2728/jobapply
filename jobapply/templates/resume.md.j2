@@ -1,6 +1,6 @@
 # {{ tr.document_title or "Resume" }}
 
-{% if tr.contact_line %}{{ tr.contact_line }}{% endif %}
+{% if contact_md %}{{ contact_md }}{% elif tr.contact_line %}{{ tr.contact_line }}{% endif %}
 
 ## Summary
 
@@ -30,3 +30,12 @@
 {% endfor %}
 
 {% endfor %}
+
+{% if tr.education %}## Education
+
+{% for ed in tr.education %}
+### {{ ed.school }}{% if ed.dates %} ({{ ed.dates }}){% endif %}
+
+{% if ed.degree %}**{{ ed.degree }}**{% endif %}{% if ed.details %} — {{ ed.details }}{% endif %}
+
+{% endfor %}{% endif %}

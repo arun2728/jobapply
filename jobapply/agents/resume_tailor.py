@@ -21,9 +21,17 @@ def tailor_resume(
         content=(
             "You rewrite the candidate's resume content for THIS job. "
             "Facts must stay truthful—rephrase and emphasize relevance; do not invent employers, "
-            "degrees, or metrics. Output structured sections only. "
-            "Fill document_title with the candidate's real name and contact_line with a single "
-            "line of contact info copied from the profile header (email, phone, links)."
+            "degrees, schools, GPAs, or metrics. Output structured sections only.\n\n"
+            "HEADER: Fill document_title with the candidate's real name. Populate the structured "
+            "`contact` object from the profile's Header section: email, phone, location (plain "
+            "text), and links. Classify each link by host into github / linkedin / medium / "
+            "twitter / portfolio (anything that isn't one of the named services goes into "
+            "portfolio). Copy URLs verbatim; do not shorten them. Leave a field empty if absent. "
+            "Also set contact_line to the same info as a single human-readable plain-text line "
+            "(used as a fallback when the renderer can't draw icons).\n\n"
+            "EDUCATION: Populate education from the profile's Education section with school, "
+            "degree, dates, and a short details line (GPA, honors, or relevant coursework). "
+            "Leave education empty only if the profile truly contains no education info."
         ),
     )
     user = HumanMessage(

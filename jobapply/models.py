@@ -71,18 +71,56 @@ class ProjectItem(BaseModel):
     bullets: list[str] = Field(default_factory=list)
 
 
+class EducationItem(BaseModel):
+    """Single education entry rendered in the resume."""
+
+    school: str = ""
+    degree: str = ""
+    dates: str = ""
+    details: str = Field("", description="GPA, honors, coursework — single line.")
+
+
+class ContactInfo(BaseModel):
+    """Structured contact info rendered as hyperlinked icons in the resume header.
+
+    Each field accepts either a full URL (``https://...``) or a bare username /
+    handle. The renderer normalizes both forms, derives a clean display label
+    (e.g. ``github/arun2728``), and wraps the entry in ``\\href{}{...}``.
+    """
+
+    email: str = ""
+    phone: str = ""
+    location: str = Field("", description="Plain-text city/country; no link.")
+    portfolio: str = Field("", description="Personal site URL.")
+    github: str = Field("", description="Username or full GitHub URL.")
+    linkedin: str = Field("", description="Username or full LinkedIn URL.")
+    medium: str = Field("", description="Username or full Medium URL.")
+    twitter: str = Field("", description="Username or full Twitter/X URL.")
+
+    def has_any(self) -> bool:
+        return any(getattr(self, f) for f in type(self).model_fields)
+
+
 class TailoredResume(BaseModel):
     """Structured resume body (rendered to MD/LaTeX)."""
 
     document_title: str = Field("", description="Candidate name for PDF header.")
     contact_line: str = Field(
         "",
-        description="One line: email | phone | links (plain text; escaped for LaTeX).",
+        description=(
+            "Optional fallback contact line as plain text (used only when "
+            "structured `contact` is empty)."
+        ),
+    )
+    contact: ContactInfo = Field(
+        default_factory=ContactInfo,
+        description="Structured contact details rendered as hyperlinked icons.",
     )
     summary: str = ""
     skills: list[str] = Field(default_factory=list)
     experience: list[ExperienceRole] = Field(default_factory=list)
     projects: list[ProjectItem] = Field(default_factory=list)
+    education: list[EducationItem] = Field(default_factory=list)
 
 
 class CoverLetter(BaseModel):
