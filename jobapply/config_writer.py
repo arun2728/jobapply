@@ -50,6 +50,20 @@ def _provider_block(name: str, pc: ProviderConfig) -> str:
 
     if name == "ollama":
         lines.append("# Ollama is local; api_key usually empty. Adjust base_url if remote.\n")
+    elif name == "cloudflare":
+        lines.append(
+            "# Workers AI uses an OpenAI-compatible /v1 endpoint per account.\n"
+            "# Create an API token with the 'Workers AI' permission at\n"
+            "# https://dash.cloudflare.com/profile/api-tokens. Find your\n"
+            "# account_id on the Workers & Pages overview page. All fields\n"
+            '# accept the "env:VAR_NAME" indirection.\n'
+            "#\n"
+            "# Set `gateway_id` to route requests through Cloudflare AI\n"
+            "# Gateway's Unified API instead of hitting Workers AI directly.\n"
+            "# That's required for BYOK third-party models such as\n"
+            "# `openai/gpt-5` or `anthropic/claude-...`. Leave it unset to\n"
+            "# call native `@cf/...` models on Workers AI directly.\n",
+        )
     else:
         lines.append(
             '# Tip: use api_key = "env:VAR_NAME" to pull the value from an env var\n'
@@ -61,6 +75,16 @@ def _provider_block(name: str, pc: ProviderConfig) -> str:
     else:
         placeholder = "" if name == "ollama" else "REPLACE_ME"
         lines.append(f'# api_key = "{placeholder}"\n')
+
+    if name == "cloudflare":
+        if pc.account_id is not None:
+            lines.append(_kv("account_id", pc.account_id))
+        else:
+            lines.append('# account_id = "REPLACE_ME"\n')
+        if pc.gateway_id is not None:
+            lines.append(_kv("gateway_id", pc.gateway_id))
+        else:
+            lines.append('# gateway_id = "my-gateway"  # optional, enables BYOK models\n')
 
     if pc.base_url is not None:
         lines.append(_kv("base_url", pc.base_url))

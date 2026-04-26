@@ -20,6 +20,7 @@ from jobapply.config import (
     ProviderConfig,
     apply_latex_api_env,
     find_config_path,
+    get_account_id,
     get_api_key,
     get_base_url,
     load_config,
@@ -228,14 +229,47 @@ def _ask_provider_settings(provider: str, current: ProviderConfig) -> ProviderCo
 
     api_key: str | None = current.api_key
     if provider != "ollama":
-        prompt = f"{provider} API key (or env:VAR_NAME, blank to skip)"
+        # Cloudflare's "API key" field is actually their API token. Hint it
+        # in the prompt so users know which credential to paste.
+        if provider == "cloudflare":
+            prompt = "Cloudflare API token (Workers AI scope; or env:VAR_NAME, blank to skip)"
+        else:
+            prompt = f"{provider} API key (or env:VAR_NAME, blank to skip)"
         entered = questionary.password(prompt, default=current.api_key or "").ask()
         if entered is None:
             raise typer.Exit(1)
         api_key = entered.strip() or None
 
+    account_id: str | None = current.account_id
+    gateway_id: str | None = current.gateway_id
+    if provider == "cloudflare":
+        entered_account = questionary.text(
+            "Cloudflare account id (find it on the Workers & Pages overview page)",
+            default=current.account_id or "",
+        ).ask()
+        if entered_account is None:
+            raise typer.Exit(1)
+        account_id = entered_account.strip() or None
+
+        # Optional. Setting this routes through AI Gateway's compat endpoint,
+        # which is required for BYOK models like `openai/gpt-5`.
+        entered_gateway = questionary.text(
+            (
+                "Cloudflare AI Gateway slug (optional — leave blank for direct "
+                "Workers AI; set this to use BYOK models like openai/gpt-5)"
+            ),
+            default=current.gateway_id or "",
+        ).ask()
+        if entered_gateway is None:
+            raise typer.Exit(1)
+        gateway_id = entered_gateway.strip() or None
+
     base_url: str | None = current.base_url
-    if provider in {"ollama", "openai"} or current.base_url is not None:
+    # Cloudflare's base URL is derived from account_id (+ optional gateway_id),
+    # so don't prompt for it.
+    if provider in {"ollama", "openai"} or (
+        current.base_url is not None and provider != "cloudflare"
+    ):
         entered_url = questionary.text(
             f"{provider} base URL (blank for default)",
             default=default_base,
@@ -244,10 +278,20 @@ def _ask_provider_settings(provider: str, current: ProviderConfig) -> ProviderCo
             raise typer.Exit(1)
         base_url = entered_url.strip() or None
 
-    model = questionary.text(f"{provider} model", default=default_model).ask()
+    model_prompt = f"{provider} model"
+    if provider == "cloudflare" and gateway_id:
+        # Hint the right naming scheme for the gateway path.
+        model_prompt += " (use provider/model, e.g. openai/gpt-5)"
+    model = questionary.text(model_prompt, default=default_model).ask()
     if model is None:
         raise typer.Exit(1)
-    return ProviderConfig(api_key=api_key, base_url=base_url, model=model.strip() or None)
+    return ProviderConfig(
+        api_key=api_key,
+        base_url=base_url,
+        model=model.strip() or None,
+        account_id=account_id,
+        gateway_id=gateway_id,
+    )
 
 
 def _interactive_config(existing: AppConfig | None) -> AppConfig:
@@ -582,6 +626,12 @@ def _validate_keys(cfg: AppConfig, provider: str) -> None:
         console.print(
             f"[yellow]Warning:[/yellow] no API key found for provider={p}. "
             "Set it via `jobapply config` or an env var.",
+        )
+    if p == "cloudflare" and not get_account_id(cfg, p):
+        console.print(
+            "[yellow]Warning:[/yellow] no Cloudflare account id found. "
+            "Set [providers.cloudflare].account_id in jobapply.toml or "
+            "CLOUDFLARE_ACCOUNT_ID in env.",
         )
     if p in {"openai", "ollama"}:
         get_base_url(cfg, p)

@@ -9,20 +9,45 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-ProviderName = Literal["gemini", "anthropic", "openai", "ollama"]
-PROVIDER_NAMES: tuple[ProviderName, ...] = ("gemini", "anthropic", "openai", "ollama")
+ProviderName = Literal["gemini", "anthropic", "openai", "ollama", "cloudflare"]
+PROVIDER_NAMES: tuple[ProviderName, ...] = (
+    "gemini",
+    "anthropic",
+    "openai",
+    "ollama",
+    "cloudflare",
+)
 
 DEFAULT_MODELS: dict[str, str] = {
     "gemini": "gemini-2.0-flash",
     "anthropic": "claude-3-5-haiku-latest",
     "openai": "gpt-4o-mini",
     "ollama": "llama3.1",
+    # Workers AI's OpenAI-compatible endpoint accepts any model id from
+    # https://developers.cloudflare.com/workers-ai/models/. The 8B Llama 3.1
+    # is a sensible default — fast, free tier, supports tool/structured calls.
+    "cloudflare": "@cf/openai/gpt-oss-120b"
 }
 
 DEFAULT_BASE_URLS: dict[str, str] = {
     "ollama": "http://127.0.0.1:11434",
     "openai": "https://api.openai.com/v1",
 }
+
+# Cloudflare Workers AI exposes an OpenAI-compatible endpoint under each
+# account. The full base URL is built by interpolating the user's account id
+# (see `cloudflare_base_url`). We don't put it in DEFAULT_BASE_URLS because
+# it is account-specific and meaningless without `account_id`.
+CLOUDFLARE_BASE_URL_TEMPLATE = "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
+
+# Cloudflare AI Gateway "Unified" / compat endpoint. Use this instead of the
+# direct Workers AI endpoint when you want to call third-party models like
+# ``openai/gpt-5`` or ``anthropic/claude-...`` — those go through BYOK keys
+# stored in the gateway. Reference:
+# https://developers.cloudflare.com/ai-gateway/usage/chat-completion/
+CLOUDFLARE_GATEWAY_BASE_URL_TEMPLATE = (
+    "https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/compat"
+)
 
 # Public latex-on-http instance (https://github.com/YtoTech/latex-on-http).
 # Self-host via Docker if you'd rather not send résumé content to a third party.
@@ -36,6 +61,24 @@ class ProviderConfig(BaseModel):
     api_key: str | None = Field(None, description="Plaintext or env:VAR_NAME reference.")
     base_url: str | None = Field(None, description="Override base URL (Ollama, OpenAI-compatible).")
     model: str | None = Field(None, description="Default model id for this provider.")
+    account_id: str | None = Field(
+        None,
+        description=(
+            "Cloudflare account id. Only used for the `cloudflare` provider; "
+            "ignored elsewhere. Accepts ``env:VAR_NAME`` indirection."
+        ),
+    )
+    gateway_id: str | None = Field(
+        None,
+        description=(
+            "Cloudflare AI Gateway slug. When set on the `cloudflare` provider, "
+            "requests are routed through the Gateway's OpenAI-compatible "
+            "endpoint, which lets you call third-party models such as "
+            "``openai/gpt-5`` or ``anthropic/claude-...`` using BYOK keys "
+            "configured in the gateway. Leave unset to talk to Workers AI "
+            "directly (``@cf/...`` models only). Accepts ``env:VAR_NAME``."
+        ),
+    )
 
 
 class LatexApiConfig(BaseModel):
@@ -159,7 +202,62 @@ def get_api_key(cfg: AppConfig, provider: str) -> str | None:
         return os.environ.get("OPENAI_API_KEY")
     if p == "ollama":
         return os.environ.get("OLLAMA_API_KEY")
+    if p == "cloudflare":
+        return os.environ.get("CLOUDFLARE_API_TOKEN") or os.environ.get(
+            "CLOUDFLARE_WORKERS_AI_TOKEN"
+        )
     return None
+
+
+def get_account_id(cfg: AppConfig, provider: str = "cloudflare") -> str | None:
+    """Resolve the Cloudflare account id. Config first, then env.
+
+    Supports ``env:VAR_NAME`` indirection on ``account_id`` so the value can
+    live in the environment alongside the API token.
+    """
+    p = provider.lower().strip()
+    pc = cfg.provider_config(p)
+    resolved = _resolve_secret(pc.account_id)
+    if resolved:
+        return resolved
+    if p == "cloudflare":
+        return os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+    return None
+
+
+def get_gateway_id(cfg: AppConfig, provider: str = "cloudflare") -> str | None:
+    """Resolve the Cloudflare AI Gateway slug. Config first, then env."""
+    p = provider.lower().strip()
+    pc = cfg.provider_config(p)
+    resolved = _resolve_secret(pc.gateway_id)
+    if resolved:
+        return resolved
+    if p == "cloudflare":
+        return os.environ.get("CLOUDFLARE_AI_GATEWAY_ID")
+    return None
+
+
+def cloudflare_base_url(account_id: str) -> str:
+    """Assemble the OpenAI-compatible Workers AI endpoint for ``account_id``.
+
+    This is the *direct* Workers AI endpoint and only accepts native
+    ``@cf/...`` models. For third-party models (``openai/...``,
+    ``anthropic/...``) use :func:`cloudflare_gateway_base_url`.
+    """
+    return CLOUDFLARE_BASE_URL_TEMPLATE.format(account_id=account_id.strip())
+
+
+def cloudflare_gateway_base_url(account_id: str, gateway_id: str) -> str:
+    """Assemble the AI Gateway *Unified API* (OpenAI-compatible) base URL.
+
+    Models on this endpoint use the ``provider/model`` form, e.g.
+    ``openai/gpt-5`` or ``workers-ai/@cf/meta/llama-3.1-8b-instruct``.
+    The provider segment must be enabled for BYOK on the gateway.
+    """
+    return CLOUDFLARE_GATEWAY_BASE_URL_TEMPLATE.format(
+        account_id=account_id.strip(),
+        gateway_id=gateway_id.strip(),
+    )
 
 
 def get_base_url(cfg: AppConfig, provider: str) -> str | None:
@@ -171,6 +269,20 @@ def get_base_url(cfg: AppConfig, provider: str) -> str | None:
         return os.environ.get("OLLAMA_BASE_URL") or DEFAULT_BASE_URLS["ollama"]
     if p == "openai":
         return os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URLS["openai"]
+    if p == "cloudflare":
+        # Built from account_id at the call site (see `llm.create_chat_model`)
+        # because it depends on a separate field, not just env config.
+        account_id = get_account_id(cfg, "cloudflare")
+        if not account_id:
+            return None
+        # If a gateway slug is configured, route through AI Gateway's compat
+        # endpoint so users can call BYOK third-party models like
+        # ``openai/gpt-5``. Otherwise fall through to the direct Workers AI
+        # endpoint, which only accepts ``@cf/...`` models.
+        gateway_id = get_gateway_id(cfg, "cloudflare")
+        if gateway_id:
+            return cloudflare_gateway_base_url(account_id, gateway_id)
+        return cloudflare_base_url(account_id)
     return None
 
 

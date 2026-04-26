@@ -1,6 +1,6 @@
 # JobApply
 
-Open-source CLI to **search jobs** ([JobSpy](https://github.com/speedyapply/python-jobspy): Indeed, LinkedIn, Google Jobs, etc.), then run a **LangGraph** pipeline that scores fit, **tailors your resume** and **writes a cover letter** from `profile.md` using **Gemini**, **Anthropic**, **OpenAI** (and any OpenAI-compatible gateway), or **Ollama** (structured outputs via LangChain).
+Open-source CLI to **search jobs** ([JobSpy](https://github.com/speedyapply/python-jobspy): Indeed, LinkedIn, Google Jobs, etc.), then run a **LangGraph** pipeline that scores fit, **tailors your resume** and **writes a cover letter** from `profile.md` using **Gemini**, **Anthropic**, **OpenAI** (and any OpenAI-compatible gateway), **Ollama**, or **Cloudflare Workers AI** (structured outputs via LangChain).
 
 Outputs per run:
 
@@ -34,7 +34,7 @@ jobapply run --titles "Backend Engineer,ML Engineer" --skills "Python,Kubernetes
 
 ### Configuration
 
-`jobapply.toml` holds the active provider, model defaults, and per-provider connection details. Every secret accepts an indirection: `api_key = "env:OPENAI_API_KEY"` reads the value from the environment at runtime instead of storing it in the file. See [`jobapply.toml.example`](jobapply.toml.example) for a fully documented template covering all four providers.
+`jobapply.toml` holds the active provider, model defaults, and per-provider connection details. Every secret accepts an indirection: `api_key = "env:OPENAI_API_KEY"` reads the value from the environment at runtime instead of storing it in the file. See [`jobapply.toml.example`](jobapply.toml.example) for a fully documented template covering all five providers.
 
 | Provider | Required keys | Notes |
 |----------|---------------|-------|
@@ -42,6 +42,18 @@ jobapply run --titles "Backend Engineer,ML Engineer" --skills "Python,Kubernetes
 | `anthropic` | `api_key` (or `ANTHROPIC_API_KEY` env) | optional `base_url` |
 | `openai` | `api_key` (or `OPENAI_API_KEY` env) | `base_url` for OpenAI-compatible gateways (Azure, Together, Groq, …) |
 | `ollama` | none | local; configure `base_url` (default `http://127.0.0.1:11434`) |
+| `cloudflare` | `api_key` (Workers AI token, or `CLOUDFLARE_API_TOKEN` env) **and** `account_id` (or `CLOUDFLARE_ACCOUNT_ID` env) | Two routing modes — see below |
+
+#### Cloudflare routing modes
+
+`jobapply` supports both Cloudflare entry points; pick one by deciding whether to set `gateway_id` (or `CLOUDFLARE_AI_GATEWAY_ID`).
+
+| Mode | When to use | `model` format | Example |
+|------|-------------|----------------|---------|
+| Direct Workers AI (`gateway_id` **unset**) | Calling Cloudflare's natively hosted models | `@cf/<vendor>/<name>` — see [Workers AI models](https://developers.cloudflare.com/workers-ai/models/) | `@cf/openai/gpt-oss-120b` |
+| AI Gateway Unified API (`gateway_id` **set**) | Calling third-party models via BYOK keys you've configured in the gateway's [Stored Keys](https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/) | `<provider>/<model>` — see the [Unified API docs](https://developers.cloudflare.com/ai-gateway/usage/chat-completion/) | `openai/gpt-5`, `anthropic/claude-3-5-sonnet`, `workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
+
+> If you hit `AiError: No such model: ... openai/gpt-5` on the direct endpoint, you're in mode 1 — either switch the model to a `@cf/...` id, or create an AI Gateway, store your OpenAI key under "Stored Keys", and set `gateway_id` to switch to mode 2.
 
 `jobapply.toml` is gitignored by default. If you prefer env-only secrets, copy `.env.example` to `.env` and leave `api_key` lines commented out (or use `env:VAR_NAME`).
 
