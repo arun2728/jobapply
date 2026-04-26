@@ -1,0 +1,476 @@
+%%%%
+% MTecknology's Resume
+%%%%
+% Author: Michael Lustfield
+% License: CC-BY-4
+% - https://creativecommons.org/licenses/by/4.0/legalcode.txt
+%%%%
+
+\documentclass[letterpaper,10pt]{article}
+%%%%%%%%%%%%%%%%%%%%%%%
+%% BEGIN_FILE: mteck.sty
+%% NOTE: Everything between here and END_FILE can
+%% be relocated to "mteck.sty" and then included with:
+%\usepackage{mteck}
+
+% Dependencies
+% NOTE: Some packages (lastpage, hyperref) require second build!
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage{fontawesome5}
+\usepackage{multicol}
+\usepackage{bookmark}
+\usepackage{lastpage}
+
+% Sans-Serif
+%\usepackage[sfdefault]{FiraSans}
+%\usepackage[sfdefault]{roboto}
+%\usepackage[sfdefault]{noto-sans}
+%\usepackage[default]{sourcesanspro}
+
+% Serif
+\usepackage{CormorantGaramond}
+\usepackage{charter}
+
+% Colors
+% Use with \color{Name}
+% Can wrap entire heading with {\color{accent} [...] }
+\usepackage{xcolor}
+\definecolor{accentTitle}{HTML}{0e6e55}
+\definecolor{accentText}{HTML}{0e6e55}
+\definecolor{accentLine}{HTML}{a16f0b}
+
+% Misc. Options
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\urlstyle{same}
+
+% Adjust Margins
+\addtolength{\oddsidemargin}{-0.7in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1.19in}
+\addtolength{\topmargin}{-0.7in}
+\addtolength{\textheight}{1.4in}
+
+\setlength{\multicolsep}{-3.0pt}
+\setlength{\columnsep}{-1pt}
+\setlength{\tabcolsep}{0pt}
+\setlength{\footskip}{3.7pt}
+\raggedbottom
+\raggedright
+
+% ATS Readability
+\input{glyphtounicode}
+\pdfgentounicode=1
+
+%-----------------%
+% Custom Commands %
+%-----------------%
+
+% Centered title along with subtitle between HR
+% Usage: \documentTitle{Name}{Details}
+\newcommand{\documentTitle}[2]{
+  \begin{center}
+    {\Huge\color{accentTitle} #1}
+    \vspace{10pt}
+    {\color{accentLine} \hrule}
+    \vspace{2pt}
+    %{\footnotesize\color{accentTitle} #2}
+    \footnotesize{#2}
+    \vspace{2pt}
+    {\color{accentLine} \hrule}
+  \end{center}
+}
+
+% Create a footer with correct padding
+% Usage: \documentFooter{\thepage of X}
+\newcommand{\documentFooter}[1]{
+  \setlength{\footskip}{10.25pt}
+  \fancyfoot[C]{\footnotesize #1}
+}
+
+% Simple wrapper to set up page numbering
+% Usage: \numberedPages
+% WARNING: Must run pdflatex twice!
+\newcommand{\numberedPages}{
+  \documentFooter{\thepage/\pageref{LastPage}}
+}
+
+% Section heading with horizontal rule
+% Usage: \section{Title}
+\titleformat{\section}{
+  \vspace{-5pt}
+  \color{accentText}
+  \raggedright\large\bfseries
+}{}{0em}{}[\color{accentLine}\titlerule]
+
+% Section heading with separator and content on same line
+% Usage: \tinysection{Title}
+\newcommand{\tinysection}[1]{
+  \phantomsection
+  \addcontentsline{toc}{section}{#1}
+  {\large{\bfseries\color{accentText}#1} {\color{accentLine} |}}
+}
+
+% Indented line with arguments left/right aligned in document
+% Usage: \heading{Left}{Right}
+\newcommand{\heading}[2]{
+  \hspace{10pt}#1\hfill#2\\
+}
+
+% Adds \textbf to \heading
+\newcommand{\headingBf}[2]{
+  \heading{\textbf{#1}}{\textbf{#2}}
+}
+
+% Adds \textit to \heading
+\newcommand{\headingIt}[2]{
+  \heading{\textit{#1}}{\textit{#2}}
+}
+
+% Template for itemized lists
+% Usage: \begin{resume_list} [items] \end{resume_list}
+\newenvironment{resume_list}{
+  \vspace{-7pt}
+  \begin{itemize}[itemsep=-2px, parsep=1pt, leftmargin=30pt]
+}{
+  \end{itemize}
+  %\vspace{-2pt}
+}
+
+% Formats an item to use as an itemized title
+% Usage: \itemTitle{Title}
+\newcommand{\itemTitle}[1]{
+  \item[] \underline{#1}\vspace{4pt}
+}
+
+% Bullets used in itemized lists
+\renewcommand\labelitemi{--}
+
+%% END_FILE: mteck.sty
+%%%%%%%%%%%%%%%%%%%%%%
+
+
+%===================%
+% Arun Addagatla's Resume %
+%===================%
+
+%\numberedPages % NOTE: lastpage requires a second build
+%\documentFooter{\thepage of 2} % Does similar without using lastpage
+\begin{document}
+
+  %---------%
+  % Heading %
+  %---------%
+
+\documentTitle{Arun Addagatla}{
+    % Web Version
+    %\raisebox{-0.05\height} \faPhone\ [redacted - web copy] ~
+    %\raisebox{-0.15\height} \faEnvelope\ [redacted - web copy] ~
+    %%
+    \href{tel:+918485019026}{
+      \raisebox{-0.05\height} \faPhone\ +918485019026} ~ | ~
+    \href{mailto:arun.a.addagatla@gmail.com}{
+      \raisebox{-0.15\height} \faEnvelope\ arun.a.addagatla@gmail.com} ~ | ~
+    \href{https://arunaddagatla.vercel.app/}{
+      \raisebox{-0.15\height} \faGlobe\ portfolio/arunaddagatla} ~ | ~
+    \href{https://github.com/arun2728}{
+      \raisebox{-0.15\height} \faGithub\ github/arun2728} ~ | ~
+      \href{https://linkedin.com/in/arun-addagatla/}{
+      \raisebox{-0.15\height} \faLinkedin\ linkedin.com/arun-addagatla}
+     
+    %   ~ |
+    % \href{https://medium.com/@arunaddagatla}{
+    %   \raisebox{-0.15\height} \faMedium\ medium/arunaddagatla}
+}
+
+  %---------%
+  % Summary %
+  %---------%
+
+  % \tinysection{Summary}
+  % Simplified version of a monstrosity that I built back in college using current best practices.
+
+  %--------%
+  % Skills %
+  %--------%
+
+  % \section{Skills}
+
+  % \begin{multicols}{2}
+  %   \begin{itemize}[itemsep=-2px, parsep=1pt, leftmargin=75pt]
+  %     \item[\textbf{Languages}] Python, C/C++, Golang, JS
+  %     \item[\textbf{Cloud}] GCP, AWS, DigitalOcean, Cloudflare
+  %     \item[\textbf{DevOps}] Docker, Kubernetes, ONNX, Triton, TensorRT
+  %     \item[\textbf{OS}] Debian, Ubuntu, CentOS, BSD, AIX
+  %     \item[\textbf{Policies}] CIS, SOC2, PCI-DSS, GDPR, ITIL
+  %     \item[\textbf{Testing}] Pytest, Docker, CircleCI, Jenkins, Inspec
+  %   \end{itemize}
+  % \end{multicols}
+
+  \section{Skills}
+
+\begin{multicols}{2}
+  \begin{itemize}[itemsep=-2px, parsep=1pt, leftmargin=75pt]
+    \item[\textbf{Programming}] Python, Golang, C/C++, JavaScript
+    \item[\textbf{AI/ML}] LLM, MCP, RAG, Agentic AI, ASR, TTS
+    \item[\textbf{Inference}] ONNX, TensorRT, Triton, JAX, PEFT, LoRA
+    \item[\textbf{Cloud/Infra}] GCP, AWS, Cloudflare, Kubernetes
+    % \item[\textbf{Data Systems}] ETL Pipelines, VPC Networking, OAuth (Google, Microsoft, GitHub), Vector Search
+    \item[\textbf{DevOps/CI-CD}] Docker, VPC, GitHub Actions, Jenkins
+    % \item[\textbf{Systems}] Linux (Debian, Ubuntu, CentOS), BSD, AIX
+    \item[\textbf{Monitoring}] Prometheus, Grafana, Sentry
+    % \item[\textbf{Compliance}] CIS, SOC2, PCI-DSS, GDPR, ITIL
+  \end{itemize}
+\end{multicols}
+
+
+  %------------%
+  % Experience %
+  %------------%
+
+  \section{Experience}
+
+% \headingBf{\href{https://lamatic.ai/}{Lamatic.ai}}{March 2024 - Present}
+% \headingIt{Senior AI Engineer \& Founding Team Member}{}
+
+% \begin{resume_list}
+
+% \item Built \textbf{80\%} of Lamatic's core \textbf{AI-driven tech stack} as the first employee, focusing on \textbf{agentic workflows}, \textbf{LLM orchestration}, and \textbf{intelligent automation} systems with supporting backend infrastructure.
+
+% \item Designed and implemented \textbf{multi-agent AI systems} including a \textbf{Supervisor Agent} architecture for complex workflow orchestration, enabling autonomous task delegation and intelligent decision-making across \textbf{1M+} monthly AI requests.
+
+% \item Developed an \textbf{AI-powered hiring agent} that autonomously analyzes candidate profiles using \textbf{multi-modal AI} (resume parsing + video response analysis), reducing hiring workload by \textbf{70\%} through intelligent candidate shortlisting and scoring.
+
+% \item Built comprehensive \textbf{AI evaluation framework} with configurable test suites, enabling \textbf{LLM-as-a-judge} scoring systems where models self-evaluate outputs against expected results, providing automated quality assessment for AI workflows.
+
+% \item Created an \textbf{AI Experiments Assistant} that analyzes workflow performance using \textbf{advanced prompt engineering} and \textbf{chain-of-thought reasoning}, providing intelligent suggestions for optimization and diff-based result comparisons.
+
+% \item Engineered advanced \textbf{AI infrastructure} including \textbf{Semantic RAG} with vector embeddings, \textbf{MCP (Model Context Protocol)} nodes for AI agent communication, and scalable \textbf{LLM pipelines} for data-intensive AI workflows.
+
+% \item Implemented \textbf{intelligent ETL pipeline} on \textbf{Kubernetes} with \textbf{AI-enhanced data processing}, integrating multiple sources (Drive, S3, SharePoint) using \textbf{semantic understanding} for automated data classification and routing.
+
+% \item Developed high-performance \textbf{AI model deployment engine} handling \textbf{1K+} model deployments/min with intelligent resource allocation, optimizing deployment time from 2 min to 15s (\textbf{87\%} improvement) through \textbf{predictive scaling}.
+
+% \item Architected \textbf{AI-native version control system} with intelligent conflict resolution and automated \textbf{workflow optimization suggestions}, enabling seamless GitHub integration for AI project management.
+
+% \end{resume_list}
+
+\headingBf{\href{https://lamatic.ai/}{Lamatic.ai}}{March 2024 - Present}
+\headingIt{Founding Engineer - AI}{}
+
+\begin{resume_list}
+\item As the \textbf{first engineering hire}, built over \textbf{80\%} of Lamatic’s core stack, spanning \textbf{AI systems}, \textbf{backend infrastructure}, and critical \textbf{frontend} components.  
+
+\item Designed and trained an intelligent \textbf{AI Agent} that understands Lamatic’s \textbf{flow configurations} and autonomously builds \textbf{workflow pipelines} from user requirements, cutting down manual setup time drastically.  
+
+\item Built a configurable \textbf{AI evaluation framework} with \textbf{LLM-as-a-judge} capabilities, enabling automated quality scoring where models benchmark their outputs against expected results.  
+
+\item Created an internal \textbf{AI-powered Hiring Agent} leveraging \textbf{multimodal agents} (resume parsing + video response analysis), automating candidate shortlisting and reducing recruiter workload by \textbf{70\%}.  
+
+\item Architected a high-performance \textbf{serverless executor} processing \textbf{1M+ monthly requests} and a deployment engine capable of \textbf{1K+ deployments/min}, reducing deployment latency from 2 minutes to 15s (\textbf{87\% improvement}).  
+
+\item Engineered secure (VPC) and scalable \textbf{Kubernetes-based ETL pipelines} for data sources like Drive, S3, and SharePoint and implemented \textbf{OAuth systems} for Google, Microsoft, and GitHub.  
+
+\item Developed advanced AI \& Data processing nodes including semantic \textbf{RAG} and an \textbf{Multi-Agent Supervisor} nodes.
+
+
+\item Built real-time \textbf{webhook integration systems} for \textbf{Slack} and \textbf{Teams}, enabling instant event-driven synchronization.  
+
+\item Designed Lamatic’s \textbf{version control system (VCS)} with native \textbf{GitHub integration}, allowing automatic sync of flows with repositories for reproducibility and collaboration.  
+\end{resume_list}
+
+
+%   \headingBf{\href{https://lamatic.ai/}{Lamatic.ai}}{March 2024 - Present}
+%   \headingIt{Senior AI Engineer \& Founding Team Member}{}
+
+%   \begin{resume_list}
+
+%   \item Built \textbf{80\%} of Lamatic’s core tech stack as the first employee, spanning \textbf{AI} and  \textbf{back-end}, infrastructure, along with critical \textbf{front-end} components.
+
+% \item Developed and trained an \textbf{AI Agent} capable of understanding Lamatic’s \textbf{flow configurations} and autonomously building \textbf{workflow pipelines} based on user requirements, significantly reducing manual effort in flow creation. 
+
+
+% \item Built comprehensive \textbf{AI evaluation framework} with configurable test suites, enabling \textbf{LLM-as-a-judge} scoring systems where models self-evaluate outputs against expected results, providing automated quality assessment for AI workflows.
+
+% \item Designed and deployed a robust \textbf{ETL pipeline} on \textbf{Kubernetes} with \textbf{VPC networking}, integrating multiple data sources (Drive, S3, SharePoint) and implementing required \textbf{OAuth} system for Google, GitHub, and Microsoft.
+
+% \item Engineered a serverless \textbf{flow executor} supporting \textbf{1M+} monthly requests and a high-performance \textbf{deployment engine} handling \textbf{1K+} project deployments/min; optimized deployment time from 2 min to 15s (\textbf{87\%} faster).
+
+% \item Developed an internal \textbf{AI-powered hiring agent} that autonomously analyzes candidate profiles using \textbf{ multimodal AI} (resume parsing + video response analysis), reducing the hiring workload by \textbf{70\%} through intelligent candidate shortlisting and scoring.
+
+% \item \textbf{AI \& Data Processing Nodes:} Built advanced semantic RAG systems and Agent AI supervisor nodes, enhancing platform's AI capabilities for intelligent data processing and workflow automation
+  
+% \item Built real-time \textbf{webhook integration systems} for \textbf{Slack} and \textbf{Microsoft Teams}, enabling seamless, instant data synchronization.
+
+% \item Architected Lamatic’s \textbf{version control system (VCS)} with native \textbf{GitHub integration}, allowing automatic synchronization of Lamatic flows with user repositories.
+% \end{resume_list}
+
+%   \begin{resume_list}
+% \item \textbf{Full-Stack Infrastructure Development:} Architected and built \textbf{80\%} of Lamatic's core technology platform as the founding engineer, including complete backend infrastructure with serverless executor engine, AI infrastructure, and ETL pipelines
+
+% \item \textbf{Version Control \& Flow Management:} Developed comprehensive version control system for Lamatic flows integrated with \textbf{GitHub}, enabling seamless workflow versioning and collaboration
+
+% \item \textbf{AI \& Data Processing Nodes:} Built advanced semantic RAG systems and Agent AI supervisor nodes, enhancing platform's AI capabilities for intelligent data processing and workflow automation
+
+% \item \textbf{Scalable ETL Pipeline:} Designed and deployed a \textbf{Kubernetes}-based ETL infrastructure with secure VPC networking, integrating multiple data sources (Google Drive, S3, OneDrive, SharePoint) to deliver enterprise-grade data pipelines capable of syncing \textbf{100+ GB} of data.
+
+% \item \textbf{High-Performance Execution Engine:} Engineered serverless flow executor capable of handling \textbf{1M+} requests monthly with deployment engine supporting \textbf{1000+} project deployments per minute
+
+% \item \textbf{Performance Optimization:} Reduced project deployment time by \textbf{87\%} (from 2 minutes to 15 seconds) through implementation of optimized out-of-the-box deployment solutions
+
+% \item \textbf{Frontend Contributions:} Collaborated on key front-end components to deliver end-to-end user experiences across the platform \end{resume_list}
+  
+%   \begin{resume_list}
+% \item Led end-to-end development of Lamatic's core technical infrastructure, architecting and building approximately 80\% of the company's technology stack
+
+% \item Designed and implemented version control system for workflow management integrated with GitHub, enabling seamless collaboration and deployment processes
+
+% \item Built comprehensive backend infrastructure including serverless executor engine, AI infrastructure components, and GCP-based ETL pipelines supporting enterprise-scale operations
+
+% \item Developed advanced AI workflow nodes including Semantic RAG systems and Agent AI Supervisor Nodes for intelligent automation and data processing
+
+% \item Architected scalable ETL pipeline deployed on Kubernetes with VPC networking, supporting multiple data sources including Google Drive, Sheets, Amazon S3, OneDrive, and SharePoint
+
+% \item Engineered high-performance serverless flow executor capable of processing up to 1 million requests monthly with automated deployment engine handling 1,000+ project deployments per minute
+
+% \item Optimized deployment performance by 87%, reducing project deployment time from 2 minutes to 15 seconds through innovative out-of-the-box solutions
+
+% \item Delivered initial frontend architecture for Lamatic Studio product suite, including flow editor and project navigator components
+%   \end{resume_list}
+
+
+% \headingBf{Samespace}{Oct 2022 -- Mar 2024}
+% \headingIt{Machine Learning Engineer}{}
+% \begin{resume_list}
+%   \item Deployed \textbf{conversational AI} systems (\textbf{chatbots/voicebots}) handling \textbf{95\%} of customer queries using \textbf{Zephyr} and \textbf{GPT-4}.
+  
+%   \item Fine-tuned open-source LLMs (\textbf{Mistral}, \textbf{LLaMA-2}) with \textbf{LoRA/PEFT} on bilingual datasets, improving \textbf{fluency by 30\%}.
+  
+%   \item Built scalable \textbf{LLM Inference Engine} with dynamic batching and multi-GPU support, achieving \textbf{106 tokens/sec} throughput.
+  
+%   \item Optimized \textbf{Whisper ASR} models with \textbf{ONNX/TensorRT} and \textbf{Triton} deployment, reducing latency to \textbf{0.1-0.4s}.
+  
+%   \item Implemented multimodal search using \textbf{LLaVA} and \textbf{GPT-4}, boosting performance by \textbf{60\%}.
+% \end{resume_list}
+
+
+  \headingBf{Samespace}{Oct 2022 -- Mar 2024}
+\headingIt{SDE - AI/ML}{}
+\begin{resume_list}
+  \item Designed and deployed conversational \textbf{chatbots} and \textbf{voicebots} handling \textbf{95\%} of customer queries in contact centers using word embeddings, \textbf{reranking} methods, and instruction-tuned \textbf{Zephyr} and \textbf{GPT-4}.
+
+    \item Fine-tuned open-source LLMs (\textbf{Mistral}, \textbf{LLaMA-2}) with \textbf{LoRA/PEFT} on bilingual datasets, improving \textbf{fluency by 30\%}.
+
+      \item Built scalable \textbf{LLM Inference Engine} with dynamic batching and multi-GPU support, achieving \textbf{106 tokens/sec} throughput.
+
+  
+% \item Improved the \textbf{fluency} and \textbf{contextual relevance} of open-source LLMs (\textbf{Mistral}, \textbf{LLaMA-2}) by \textbf{30\%} via \textbf{fine-tuning} on \textbf{bilingual} (Tagalog-English) and domain-specific datasets, leveraging model \textbf{quantization} techniques (\textbf{PEFT}, \textbf{LoRA}, \textbf{8-bit}).
+
+  
+  % \item Engineered a scalable \textbf{LLM Inference Engine} with \textbf{dynamic batching}, \textbf{multi-host GPU} support, and \textbf{PagedAttention}, achieving peak throughput of \textbf{106 tokens/sec}.
+
+    \item Optimized \textbf{Whisper V3 large ASR} models with \textbf{ONNX/TensorRT} and \textbf{Triton} deployment, reducing latency to \textbf{0.1-0.4s}.
+
+
+  % \item Optimized ASR pipelines by converting large models (\textbf{Whisper-large-v3}) to \textbf{ONNX} and \textbf{TensorRT}, deployed with \textbf{Triton} and \textbf{JAX}, reducing transcription latency to \textbf{0.1--0.4s}.
+  
+  % \item Implemented multimodal \textbf{image} and \textbf{vector search} using \textbf{LLaVA} and \textbf{GPT-4}, boosting search engine performance by \textbf{60\%}.
+
+    \item Implemented multimodal search using \textbf{LLaVA} and \textbf{GPT-4}, boosting performance by \textbf{60\%}.
+
+\end{resume_list}
+
+
+%   \headingBf{Samespace}{Oct 2022 - March 2024}
+%   \headingIt{Machine Learning Engineer}{}
+%   \begin{resume_list}
+% \item Created an conversational \textbf{chatbot} and \textbf{voicebot} that successfully addresses \textbf{95\%} of customer queries in a contact center environment, achieved through the use of word embedding, reranked methods, and instruction-tuning of \textbf{Zephyre}, and \textbf{GPT-4}
+% \item  Improved the fluency and relevance by \textbf{30\%} of open-soure LLMs like \textbf{Mistral} and \textbf{Llama-2}  by \textbf{fine-tuning} them on \textbf{bilingual} (Tagalish) and domain-specific customer data
+% \item Engineered an scalable \textbf{Inference Engine} for LLMs by implementing \textbf{dynamic batching}, \textbf{multi-host GPU} support, PagedAttention mechanism and achieved a maximum throughput of \textbf{106 (tokens/sec)}
+% \item Achieved a transcription latency of \textbf{0.1 - 0.4 sec} for large ASR models like \textbf{Whisper-large-v3} by converting them to \textbf{ONNX} and \textbf{TensorRT} format and deploying them to production using \textbf{Trition} and \textbf{JAX} inference server
+% \item Implemented image and \textbf{vector search} using advance multimodal  models like \textbf{LLaVA} and GPT-4 resulting in \textbf{60\%} increase in performace of existing search engine
+%   \end{resume_list}
+
+
+\headingBf{Enterpret}{Sept 2021 - Aug 2022}
+\headingIt{Machine Learning Intern - NLP}{}
+\begin{resume_list}
+\item Built serverless \textbf{multilingual sentiment analysis} system on \textbf{AWS} (Lambda, ECR); reduced processing time by \textbf{50\%}
+\item Designed \textbf{CI/CD pipelines} and \textbf{Docker} containerization with testing suites for integration, and load testing
+\item Enhanced \textbf{NER} and \textbf{text classification} models by \textbf{30\%} through hyperparameter tuning
+\item Implemented \textbf{anomaly detection} system using CloudWatch, Prometheus, and \textbf{Grafana}; reduced false positives by \textbf{60\%}
+\end{resume_list}
+
+
+% \headingBf{Enterpret}{Sept 2021 - Aug 2022}
+% \headingIt{Machine Learning Intern}{}
+% \begin{resume_list}
+% \item Architected and implemented an \textbf{AWS-powered}, serverless \textbf{Multilingual Sentiment Analysis} system using ECR, Lambda Functions, API Gateway, and Software Load Balancer; reduced processing time by \textbf{50\%} and enabled real-time analysis of customer feedback in multiple languages
+% \item Streamlined development process through the establishment of \textbf{CI/CD }pipelines and \textbf{Docker} containerization
+% \item Designed comprehensive \textbf{test suites} for unit, integration, and \textbf{load testing}, bolstering the reliability and robustness
+% \item Improved existing \textbf{NER} and \textbf{text classification} model by \textbf{30\%} using deep learning models using Hyperparameter tuning
+% \item Orchestrated the construction of robust \textbf{anomaly and drift detection} systems, leveraging AWS Cloudwatch, Prometheus, and \textbf{Grafana}; achieved a \textbf{60\%} reduction in false positive alerts and improved system stability by \textbf{30\%}.
+% \end{resume_list}
+
+
+\headingBf{Algoritmo Labs}{Jul 2020 - Sep 2020}
+\headingIt{Data Science Intern}{}
+\begin{resume_list}
+    \item Developed ML model, converted to \textbf{ONNX}, and deployed with \textbf{Golang} runtime for client-side productivity tracking
+\end{resume_list}
+
+
+
+% \headingBf{Algoritmo Labs}{Jul 2020 - Sep 2020}
+% \headingIt{Data Science Intern}{}
+% \begin{resume_list}
+%     \item Developed and deployed an native ML model on the client side in Golang to capture user productivity based on their activity
+%     % \item Analyzed over \textbf{100,000 transaction data} using machine learning and statistical analysis for anomaly detection, resulting in a \textbf{60\% CAPEX optimization}
+% \end{resume_list}
+
+  %-----------%
+  % Education %
+  %-----------%
+
+  \section{Education}
+
+  \headingBf{University of Mumbai}{} % Note: Adding year(s) exposes an implied age
+  \headingIt{Bachelor of Engineering in Computer Science}{\textbf{GPA:} \textbf{9.6}/10}
+  \headingIt{Course Work: OS, Data Structures and Algorithms, ML, Networking, NLP, SE, DBMS, CN, Probability, and Statistics}{}
+
+  % \vspace{5pt}
+  % \headingBf{Certifications}{}
+  % \begin{resume_list}
+  %   \item Salt \hspace{2pt}- SaltStack Certified Engineer
+  %   \item GCP - Professional Cloud Architect
+  % \end{resume_list}
+
+  %----------------------------%
+  % Extracurricular Activities %
+  %----------------------------%
+
+  \section{Projects}
+
+%   \headingBf{LLM Pretraining \href{https://www.freelancer.com/u/ArunAddagatla}{(Freelancing)} }{}
+%   \begin{resume_list}
+% \item Fine-tuned open-source Language Model (\textbf{LLM}), \textbf{Vicuna} and \textbf{Falcon}, on a comprehensive private patent dataset
+%     \item Utilized diverse \textbf{Data Augmentation Techniques} such as Back \textbf{translation} and Synonyms Replacement
+%     \item Implemented Model Quantisation techniques like \textbf{PEFT}, \textbf{LORA} and \textbf{8-bit quantization}
+%   \end{resume_list}
+
+  \headingBf{Multilingual Indian Voicebot \href{https://www.freelancer.com/u/ArunAddagatla}{(Freelancing)} }{}
+  \begin{resume_list}
+    \item Developed a Multilingual Indian Voicebot supporting \textbf{10+ india languages}, including Hindi and Marathi, to act as an assistant and address knowledge base queries.
+    \item Implemented Speech2Text functionality by developing and deploying \textbf{Conformer} models using Triton.
+    \item Implemented Text2Speech functionality by developing and deploying a \textbf{Fastpitch} model.
+    \item Constructed the bot using a \textbf{RAG} pipeline with Python, \textbf{langchain}, embedding, and \textbf{reranker} models.
+  \end{resume_list}
+
+\end{document}

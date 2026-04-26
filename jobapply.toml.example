@@ -1,0 +1,51 @@
+# Sample jobapply.toml.
+# Copy this to `jobapply.toml` and fill in your provider details, or run
+# `jobapply init` for an interactive setup. Both flows produce the same file.
+#
+# Secrets in this file are convenient but sensitive. For shared repos prefer
+# the `env:VAR_NAME` indirection (or a real .env) shown below.
+
+# Active LLM provider: "gemini" | "anthropic" | "openai" | "ollama".
+provider = "gemini"
+
+# Optional: override the active provider's model. If omitted, the provider's
+# own [providers.<name>].model is used.
+# model = "gemini-2.0-flash"
+
+min_fit = 0.35
+results_wanted = 30
+hours_old = 720
+concurrency = 1
+sites = ["indeed", "linkedin", "google"]
+profile_path = "profile.md"
+output_dir = "output"
+# ledger_path = "/abs/path/to/ledger.db"   # default: ~/.jobapply/ledger.db
+
+
+# --- Provider connection details -------------------------------------------
+# Each block is optional; only the active provider must be filled in.
+# `api_key` accepts either a literal value or `env:VAR_NAME` to defer the
+# secret to the environment at runtime.
+
+[providers.gemini]
+# api_key = "env:GOOGLE_API_KEY"
+# api_key = "AIza..."
+model = "gemini-2.0-flash"
+
+[providers.anthropic]
+# api_key = "env:ANTHROPIC_API_KEY"
+# api_key = "sk-ant-..."
+model = "claude-3-5-haiku-latest"
+
+[providers.openai]
+# api_key = "env:OPENAI_API_KEY"
+# api_key = "sk-..."
+# Use `base_url` for OpenAI-compatible gateways (Azure, Together, Groq, etc).
+# base_url = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
+
+[providers.ollama]
+# Ollama is local and usually requires no api_key.
+# api_key = ""
+base_url = "http://127.0.0.1:11434"
+model = "llama3.1"

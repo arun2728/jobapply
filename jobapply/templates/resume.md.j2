@@ -1,0 +1,32 @@
+# {{ tr.document_title or "Resume" }}
+
+{% if tr.contact_line %}{{ tr.contact_line }}{% endif %}
+
+## Summary
+
+{{ tr.summary }}
+
+## Skills
+
+{% for s in tr.skills %}- {{ s }}
+{% endfor %}
+
+## Experience
+
+{% for e in tr.experience %}
+### {{ e.company }} — {{ e.role }}{% if e.dates %} ({{ e.dates }}){% endif %}
+
+{% for b in e.bullets %}- {{ b }}
+{% endfor %}
+
+{% endfor %}
+
+## Projects
+
+{% for p in tr.projects %}
+### {{ p.name }}
+
+{% for b in p.bullets %}- {{ b }}
+{% endfor %}
+
+{% endfor %}
