@@ -289,10 +289,11 @@ def config_cmd(
 
 @app.command("list")
 def list_runs(
-    output_dir: str = typer.Option("output", "--output-dir", "-o"),
+    output_dir: str | None = typer.Option(None, "--output-dir", "-o"),
 ) -> None:
     """List recent output runs (directories under output/)."""
-    root = Path.cwd() / output_dir
+    cfg = load_config(Path.cwd())
+    root = Path.cwd() / (output_dir or cfg.output_dir)
     if not root.is_dir():
         console.print("[yellow]No output directory yet.[/yellow]")
         raise typer.Exit(0)
@@ -316,12 +317,30 @@ def run(
     skills: str | None = typer.Option(None, "--skills", "-s", help="Comma-separated skills"),
     location: str | None = typer.Option(None, "--location", "-l"),
     remote: bool = typer.Option(False, "--remote"),
-    results: int = typer.Option(30, "--results", "-n"),
+    results: int | None = typer.Option(
+        None,
+        "--results",
+        "-n",
+        help="Override jobapply.toml `results_wanted`.",
+    ),
     provider: str | None = typer.Option(None, "--provider"),
     model: str | None = typer.Option(None, "--model"),
-    min_fit: float = typer.Option(0.35, "--min-fit"),
-    profile_path: str = typer.Option("profile.md", "--profile"),
-    output_dir: str = typer.Option("output", "--output-dir", "-o"),
+    min_fit: float | None = typer.Option(
+        None,
+        "--min-fit",
+        help="Override jobapply.toml `min_fit`.",
+    ),
+    profile_path: str | None = typer.Option(
+        None,
+        "--profile",
+        help="Override jobapply.toml `profile_path`.",
+    ),
+    output_dir: str | None = typer.Option(
+        None,
+        "--output-dir",
+        "-o",
+        help="Override jobapply.toml `output_dir`.",
+    ),
     with_networking: bool = typer.Option(False, "--with-networking"),
     no_pdf: bool = typer.Option(False, "--no-pdf"),
     force: bool = typer.Option(
@@ -331,7 +350,11 @@ def run(
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Non-interactive defaults"),
 ) -> None:
-    """Search jobs and tailor resume + cover letter for each result."""
+    """Search jobs and tailor resume + cover letter for each result.
+
+    CLI flags override values from ``jobapply.toml``; absent flags fall back to
+    the config so settings like ``results_wanted`` actually take effect.
+    """
     load_dotenv_if_present()
     root = Path.cwd()
     cfg = load_config(root)
@@ -350,14 +373,20 @@ def run(
     if not mdl:
         console.print(f"[red]No model configured for provider {prov}.[/red]")
         raise typer.Exit(1)
-    prof = Path(profile_path)
+
+    effective_results = results if results is not None else cfg.results_wanted
+    effective_min_fit = min_fit if min_fit is not None else cfg.min_fit
+    effective_profile = profile_path or cfg.profile_path
+    effective_output = output_dir or cfg.output_dir
+
+    prof = Path(effective_profile)
     if not prof.is_file():
         console.print(f"[red]Missing profile:[/red] {prof} (run `jobapply init`)")
         raise typer.Exit(1)
     profile_text = prof.read_text(encoding="utf-8")
     ph = profile_hash_fn(profile_text)
     run_id = f"run-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}"
-    run_dir = root / output_dir / run_id
+    run_dir = root / effective_output / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     ledger_path = _ledger_db_path(cfg)
     search_input = JobSearchInput(
@@ -365,7 +394,7 @@ def run(
         skills=skill_list,
         location=location or None,
         remote=remote,
-        results_wanted=results,
+        results_wanted=effective_results,
         hours_old=cfg.hours_old,
         site_names=cfg.sites,
     ).model_dump(mode="json")
@@ -377,7 +406,7 @@ def run(
         "profile_hash": ph,
         "provider": prov,
         "model": mdl,
-        "min_fit": min_fit,
+        "min_fit": effective_min_fit,
         "with_networking": with_networking,
         "no_pdf": no_pdf,
         "force": force,
@@ -387,7 +416,11 @@ def run(
         "queue": [],
     }
     _validate_keys(cfg, prov)
-    console.print(f"[bold]Run[/bold] {run_id} → {run_dir}")
+    console.print(
+        f"[bold]Run[/bold] {run_id} → {run_dir}\n"
+        f"[dim]results_wanted={effective_results}  min_fit={effective_min_fit}  "
+        f"sites={','.join(cfg.sites)}[/dim]",
+    )
     run_pipeline(initial, run_dir=run_dir, run_id=run_id, show_progress=True, console=console)
     console.print("[green]Finished.[/green]")
 
@@ -408,7 +441,7 @@ def _validate_keys(cfg: AppConfig, provider: str) -> None:
 @app.command()
 def resume(
     run_name: str = typer.Argument(..., help="Run folder name, e.g. run-20260101-120000"),
-    output_dir: str = typer.Option("output", "--output-dir", "-o"),
+    output_dir: str | None = typer.Option(None, "--output-dir", "-o"),
     reset_checkpoint: bool = typer.Option(
         True,
         "--reset-checkpoint/--keep-checkpoint",
@@ -421,7 +454,7 @@ def resume(
     load_dotenv_if_present()
     root = Path.cwd()
     cfg = load_config(root)
-    run_dir = root / output_dir / run_name
+    run_dir = root / (output_dir or cfg.output_dir) / run_name
     if not run_dir.is_dir():
         console.print(f"[red]Unknown run:[/red] {run_dir}")
         raise typer.Exit(1)
