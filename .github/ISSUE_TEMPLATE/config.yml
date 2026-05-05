@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/arun2728/jobapply/discussions
+    about: For usage questions, ideas, or general discussion, please open a Discussion.
+  - name: Security vulnerability
+    url: https://github.com/arun2728/jobapply/security/advisories/new
+    about: Report security issues privately via GitHub Security Advisories — please do not file a public issue.

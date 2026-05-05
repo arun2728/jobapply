@@ -1,12 +1,88 @@
-# JobApply
+<p align="center">
+  <img src="assets/jobapply-logo.png" alt="JobApply logo" width="140" />
+</p>
 
-Open-source CLI to **search jobs** ([JobSpy](https://github.com/speedyapply/python-jobspy): Indeed, LinkedIn, Google Jobs, etc.), then run a **LangGraph** pipeline that scores fit, **tailors your resume** and **writes a cover letter** from a structured `profile.json` using **Gemini**, **Anthropic**, **OpenAI** (and any OpenAI-compatible gateway), **Ollama**, or **Cloudflare Workers AI** (structured outputs via LangChain).
+<h1 align="center">JobApply</h1>
+
+<p align="center">
+  <strong>One CLI to search every job board and tailor your resume with AI.</strong><br/>
+  Open-source, self-hostable, bring-your-own-LLM.
+</p>
+
+<p align="center">
+  <a href="https://github.com/arun2728/jobapply/actions/workflows/ci.yml"><img src="https://github.com/arun2728/jobapply/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/arun2728/jobapply/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
+  <a href="https://github.com/arun2728/jobapply/stargazers"><img src="https://img.shields.io/github/stars/arun2728/jobapply?style=social" alt="Stars"></a>
+  <a href="https://github.com/arun2728/jobapply/issues"><img src="https://img.shields.io/github/issues/arun2728/jobapply" alt="Issues"></a>
+</p>
+
+<p align="center">
+  <a href="#quickstart">Quickstart</a> •
+  <a href="#why-jobapply">Why</a> •
+  <a href="#how-it-works">How it works</a> •
+  <a href="#commands">Commands</a> •
+  <a href="#configuration">Config</a> •
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+<p align="center">
+  <img src="assets/jobapply-hero.png" alt="JobApply — AI job search & resume tailoring, in your terminal" width="100%" />
+</p>
+
+---
+
+JobApply collapses the two most painful parts of a job search into a single command:
+
+1. **Find roles that actually match you** — across Indeed, LinkedIn, Google Jobs, ZipRecruiter, and Glassdoor (via [JobSpy](https://github.com/speedyapply/python-jobspy)).
+2. **Tailor your resume + cover letter for every match** — via a [LangGraph](https://github.com/langchain-ai/langgraph) pipeline that scores fit and rewrites your documents using **Gemini**, **Anthropic**, **OpenAI** (or any OpenAI-compatible gateway), **Ollama**, or **Cloudflare Workers AI**.
+
+```bash
+jobapply run --titles "Backend Engineer,ML Engineer" --location "Remote" --yes
+```
+
+Everything runs locally. Your resume never leaves your machine unless you tell it to.
+
+<p align="center">
+  <img src="assets/jobapply-feature-search.png" alt="One command. Every job board." width="90%" />
+</p>
+
+## Why JobApply
+
+| Pain | What people usually do | What JobApply does |
+|---|---|---|
+| Job boards are fragmented | Tabs across 5 sites, copy-pasting filters | One CLI hits them all in parallel and dedupes |
+| Resumes need tailoring per role | "I'll just send the same PDF" → 0.3% reply rate | Per-role resume + cover letter, scored for fit |
+| Tailoring with ChatGPT is tedious | 50 prompts, 50 copy-pastes | Structured `profile.json` → structured outputs → atomic writes |
+| Tools are SaaS black boxes | Pay $30/mo to upload your resume to a stranger's server | MIT-licensed, self-hostable, bring-your-own-LLM |
+| Nothing survives a crash | Re-run, re-pay for the same tokens | SQLite ledger + checkpointed graph; resumes are idempotent |
+
+<p align="center">
+  <img src="assets/jobapply-feature-tailor.png" alt="Resume + cover letter, tailored for every job." width="90%" />
+</p>
+
+## How it works
+
+JobApply is a `StateGraph` that walks a queue of jobs through scoring, tailoring, and rendering — checkpointed at every step so a crash never costs you a token.
+
+```text
+search → dedupe → ┌─ process_one ─┐
+                  │ score fit     │
+                  │ tailor resume │
+                  │ cover letter  │
+                  │ render PDFs   │
+                  └───────────────┘   loop until queue is empty
+```
 
 Outputs per run:
 
 - `output/run-<timestamp>/jobs.json` — master index + embedded tailored content
 - `output/run-<timestamp>/jobs.csv` — Google-Sheets-friendly summary (one row per job, sorted by status + fit score)
 - `output/run-<timestamp>/jobs/<slug>/` — `job.json`, `resume.md`, `resume.tex`, `resume.pdf`, `cover_letter.md`, `cover_letter.tex`, `cover_letter.pdf`
+
+<p align="center">
+  <img src="assets/jobapply-feature-output.png" alt="PDFs, CSV, JSON — ready to apply." width="90%" />
+</p>
 
 PDFs are always produced. Markdown PDFs go through a three-tier fallback (`pandoc` → `weasyprint` → `fpdf2`); install pandoc or `pango` for nicer output. The styled LaTeX PDFs (`resume.pdf`, `cover_letter.pdf` rendered from the bundled LaTeX templates) are compiled via a remote [`latex-on-http`](https://github.com/YtoTech/latex-on-http) service by default, so no local TeX install is required — `tectonic` / `pdflatex` are still used as fallbacks if the API is disabled or unreachable.
 
@@ -15,6 +91,22 @@ PDFs are always produced. Markdown PDFs go through a three-tier fallback (`pando
 - Workspace-local ledger at `./.jobapply/ledger.db` (gitignored) skips jobs already completed for the same `profile.json` hash. Override with `ledger_path = "..."` in `jobapply.toml` if you want a shared/global ledger.
 - Re-runs that hit the ledger emit a `cached` `JobRecord` into `jobs.json` so the run dir is never empty. Pass `--force` to ignore the ledger and re-process everything.
 - Each run stores `meta.json` (search snapshot). `jobapply resume run-...` skips network search and rebuilds the work queue from `meta.json` + ledger (by default removes `checkpoint.sqlite` so processing restarts cleanly after failures).
+
+## Demo
+
+<p align="center">
+  <img src="assets/demo.gif" alt="JobApply terminal demo" width="85%" />
+</p>
+
+<p align="center">
+  <sub>
+    Higher quality:
+    <a href="assets/demo.mp4">MP4</a> ·
+    <a href="assets/demo.webm">WebM</a> ·
+    Source: <a href="assets/demo.tape">demo.tape</a>
+  </sub>
+</p>
+
 
 ## Quickstart
 
@@ -192,17 +284,55 @@ After every run, `jobapply` writes `output/run-<id>/jobs.csv` with one row per j
 - **Agents**: fit scorer, resume tailor, cover letter, optional networking — all `with_structured_output(Pydantic)`
 - **Inspiration**: multi-agent patterns from community writeups; production guardrails = structured outputs + ledger + atomic JSON writes
 
-## License
+## Roadmap
 
-MIT — see [LICENSE](LICENSE).
+Things on the table — open a [Discussion](https://github.com/arun2728/jobapply/discussions) or upvote an issue to nudge any of them forward.
 
-Bundled LaTeX templates:
-
-- `jobapply/templates/resume.tex` — adapted from Michael Lustfield's MTeck resume, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/legalcode.txt).
-- `jobapply/templates/cover_letter.tex` — adapted from Jayesh Sanwal's entry-level cover-letter template (CC BY 4.0).
-
-Your `profile.json` content remains yours.
+- [ ] DOCX export (alongside Markdown + PDF)
+- [ ] Locale-specific templates (EU CV, JP rirekisho, indented academic CV)
+- [ ] Browser-extension companion for one-click "Apply with this PDF"
+- [ ] Application-tracker integrations (Notion, Huntr, Teal)
+- [ ] Optional Postgres backend for the ledger (multi-machine workflows)
+- [ ] First-class support for Bedrock / Vertex AI / Azure OpenAI as providers
+- [ ] `jobapply tui` — a Textual UI for browsing tailored runs
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Good first issues are tagged
+[`good first issue`](https://github.com/arun2728/jobapply/labels/good%20first%20issue),
+and substantive feature work lives under
+[`help wanted`](https://github.com/arun2728/jobapply/labels/help%20wanted).
+
+By participating in this project you agree to abide by our
+[Code of Conduct](CODE_OF_CONDUCT.md). To report a security issue, see
+[SECURITY.md](SECURITY.md).
+
+## Acknowledgements
+
+- [JobSpy](https://github.com/speedyapply/python-jobspy) — the unsung hero that makes "every job board, one query" possible.
+- [LangGraph](https://github.com/langchain-ai/langgraph) — checkpointable agent graphs without the framework tax.
+- [latex-on-http](https://github.com/YtoTech/latex-on-http) — clean LaTeX→PDF as a service, self-hostable in a single Docker container.
+- [Charm VHS](https://github.com/charmbracelet/vhs) — used to record the terminal demo.
+- Bundled LaTeX templates:
+  - `jobapply/templates/resume.tex` — adapted from Michael Lustfield's MTeck resume, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/legalcode.txt).
+  - `jobapply/templates/cover_letter.tex` — adapted from Jayesh Sanwal's entry-level cover-letter template (CC BY 4.0).
+
+## Star history
+
+<a href="https://www.star-history.com/#arun2728/jobapply&Date">
+  <img src="https://api.star-history.com/svg?repos=arun2728/jobapply&type=Date" alt="Star history" width="80%" />
+</a>
+
+## License
+
+MIT — see [LICENSE](LICENSE). Your `profile.json` content remains yours.
+
+---
+
+<p align="center">
+  <img src="assets/jobapply-logo.png" alt="" width="48" />
+  <br/>
+  <em>Built with care for everyone who's tired of pasting the same resume into 47 forms.</em>
+  <br/>
+  If JobApply saved you an afternoon, please <a href="https://github.com/arun2728/jobapply">⭐ the repo</a>.
+</p>

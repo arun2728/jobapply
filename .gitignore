@@ -1,3 +1,4 @@
+# --- Python ---
 .venv/
 __pycache__/
 *.py[cod]
@@ -7,12 +8,28 @@ __pycache__/
 .pytest_cache/
 dist/
 build/
+
+# --- App outputs / state ---
 output/
-.env
-jobapply.toml
 .jobapply/
 *.sqlite
-.DS_Store
+
+# --- Secrets / local config ---
+.env
+jobapply.toml
+
+# --- Profile + run artifacts (personal data — never commit) ---
 profile.md
-inspiration.md
 profile.json
+inspiration.md
+*Profile_Updated*
+*LinkedInProfile*
+resume-test.*
+cover_letter-test.*
+*-test.pdf
+*-test.tex
+
+# --- OS / editor ---
+.DS_Store
+.idea/
+.vscode/

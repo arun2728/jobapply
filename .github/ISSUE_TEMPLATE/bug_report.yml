@@ -1,0 +1,68 @@
+name: Bug report
+description: Something is broken or behaving unexpectedly.
+title: "[bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please fill in as much detail
+        as you can — runs, logs, and configs make fixes 10x faster.
+  - type: input
+    id: version
+    attributes:
+      label: JobApply version
+      description: Output of `jobapply --version` (or commit SHA if installed from source).
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: LLM provider
+      options:
+        - gemini
+        - anthropic
+        - openai
+        - ollama
+        - cloudflare
+        - other / multiple
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS / Python version
+      placeholder: "macOS 14.5, Python 3.12.3"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including the command you ran.
+      placeholder: |
+        I ran `jobapply run --titles "Backend Engineer"` and ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / traceback
+      description: Paste any relevant CLI output. **Please redact API keys and personal info.**
+      render: shell
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have searched existing issues and this is not a duplicate.
+          required: true
+        - label: I have removed any API keys or personal information from logs.
+          required: true
