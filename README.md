@@ -317,11 +317,11 @@ By participating in this project you agree to abide by our
   - `jobapply/templates/resume.tex` — adapted from Michael Lustfield's MTeck resume, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/legalcode.txt).
   - `jobapply/templates/cover_letter.tex` — adapted from Jayesh Sanwal's entry-level cover-letter template (CC BY 4.0).
 
-## Star history
+<!-- ## Star history
 
 <a href="https://www.star-history.com/#arun2728/jobapply&Date">
   <img src="https://api.star-history.com/svg?repos=arun2728/jobapply&type=Date" alt="Star history" width="80%" />
-</a>
+</a> -->
 
 ## License
 
