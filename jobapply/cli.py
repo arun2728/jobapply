@@ -315,6 +315,11 @@ def _ask_provider_settings(provider: str, current: ProviderConfig) -> ProviderCo
         # in the prompt so users know which credential to paste.
         if provider == "cloudflare":
             prompt = "Cloudflare API token (Workers AI scope; or env:VAR_NAME, blank to skip)"
+        elif provider == "openrouter":
+            prompt = (
+                "OpenRouter API key (https://openrouter.ai/keys; "
+                "or env:VAR_NAME, blank to skip)"
+            )
         else:
             prompt = f"{provider} API key (or env:VAR_NAME, blank to skip)"
         entered = questionary.password(prompt, default=current.api_key or "").ask()
@@ -349,7 +354,7 @@ def _ask_provider_settings(provider: str, current: ProviderConfig) -> ProviderCo
     base_url: str | None = current.base_url
     # Cloudflare's base URL is derived from account_id (+ optional gateway_id),
     # so don't prompt for it.
-    if provider in {"ollama", "openai"} or (
+    if provider in {"ollama", "openai", "openrouter"} or (
         current.base_url is not None and provider != "cloudflare"
     ):
         entered_url = questionary.text(
@@ -364,6 +369,10 @@ def _ask_provider_settings(provider: str, current: ProviderConfig) -> ProviderCo
     if provider == "cloudflare" and gateway_id:
         # Hint the right naming scheme for the gateway path.
         model_prompt += " (use provider/model, e.g. openai/gpt-5)"
+    elif provider == "openrouter":
+        # OpenRouter routes by `vendor/model` ids; surface that so users
+        # don't paste a bare OpenAI model id by mistake.
+        model_prompt += " (use vendor/model, e.g. openai/gpt-4o-mini)"
     model = questionary.text(model_prompt, default=default_model).ask()
     if model is None:
         raise typer.Exit(1)
@@ -377,18 +386,51 @@ def _ask_provider_settings(provider: str, current: ProviderConfig) -> ProviderCo
 
 
 def _interactive_config(existing: AppConfig | None) -> AppConfig:
-    """Walk the user through provider + connection settings."""
+    """Walk the user through provider + connection settings.
+
+    Lets the user configure one or more providers in the same flow so they
+    can flip between them at runtime via ``--provider``. The active
+    provider written to ``provider = "..."`` is the one used when no
+    ``--provider`` flag is passed.
+    """
     base = existing or AppConfig()
-    provider = questionary.select(
-        "LLM provider",
-        choices=list(PROVIDER_NAMES),
-        default=base.provider,
+
+    # Default-check providers that already have any settings persisted plus
+    # the currently-active one so re-running `jobapply config` mirrors the
+    # state on disk.
+    pre_checked = {name for name in PROVIDER_NAMES if base.providers.get(name)}
+    pre_checked.add(base.provider)
+    choices = [
+        questionary.Choice(name, value=name, checked=name in pre_checked)
+        for name in PROVIDER_NAMES
+    ]
+    selected = questionary.checkbox(
+        "Which providers do you want to configure? "
+        "(space to toggle, enter to confirm)",
+        choices=choices,
+        validate=lambda picked: bool(picked) or "Pick at least one provider.",
     ).ask()
-    if not provider:
+    if not selected:
         raise typer.Exit(1)
 
-    current = base.provider_config(provider)
-    new_pc = _ask_provider_settings(provider, current)
+    providers: dict[str, ProviderConfig] = dict(base.providers)
+    for provider in selected:
+        console.print(f"\n[bold]Configuring[/bold] {provider}")
+        current = base.provider_config(provider)
+        providers[provider] = _ask_provider_settings(provider, current)
+
+    # Default provider must be one of the picked ones; preserve the
+    # previous default when it's still in the selection.
+    default_provider = base.provider if base.provider in selected else selected[0]
+    if len(selected) > 1:
+        chosen_default = questionary.select(
+            "Default provider (used when --provider isn't passed at runtime)",
+            choices=list(selected),
+            default=default_provider,
+        ).ask()
+        if not chosen_default:
+            raise typer.Exit(1)
+        default_provider = chosen_default
 
     output_dir = (
         questionary.text(
@@ -397,9 +439,6 @@ def _interactive_config(existing: AppConfig | None) -> AppConfig:
         ).ask()
         or base.output_dir
     )
-
-    providers = dict(base.providers)
-    providers[provider] = new_pc
 
     # Migrate legacy `profile.md` configs to the new JSON filename so the
     # next `init` writes profile.json AND the toml points at it. Custom
@@ -410,7 +449,7 @@ def _interactive_config(existing: AppConfig | None) -> AppConfig:
         profile_path = DEFAULT_PROFILE_FILENAME
 
     return AppConfig(
-        provider=provider,
+        provider=default_provider,
         model=base.model,
         min_fit=base.min_fit,
         results_wanted=base.results_wanted,
@@ -421,12 +460,88 @@ def _interactive_config(existing: AppConfig | None) -> AppConfig:
         output_dir=output_dir,
         ledger_path=base.ledger_path,
         providers=providers,
+        latex_api=base.latex_api,
     )
 
 
 def _persist_config(cfg: AppConfig, path: Path) -> None:
     path.write_text(render_config_toml(cfg), encoding="utf-8")
     console.print(f"[green]Wrote[/green] {path}")
+
+
+def _ordered_provider_choices(cfg: AppConfig) -> list[str]:
+    """Providers offered at the runtime picker.
+
+    Surfaces every provider the user actually configured first (preserving
+    the order from ``jobapply.toml``) and falls back to the active
+    provider when nothing else has been configured. We deliberately don't
+    include unknown providers from :data:`PROVIDER_NAMES` — that would
+    push the user toward a provider they have no credentials for.
+    """
+    configured = list(cfg.providers.keys())
+    if cfg.provider not in configured:
+        configured.append(cfg.provider)
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for name in configured:
+        if name and name not in seen:
+            ordered.append(name)
+            seen.add(name)
+    return ordered
+
+
+def _resolve_provider_and_model(
+    cfg: AppConfig,
+    *,
+    provider: str | None,
+    model: str | None,
+    yes: bool,
+) -> tuple[str, str]:
+    """Pick the provider + model for this run.
+
+    ``--provider`` / ``--model`` always win. When neither is passed and
+    the user is in interactive mode, prompt with the providers they
+    configured in ``jobapply.toml`` (default = the active one) and let
+    them override the resolved model.
+    """
+    if provider:
+        prov = provider.lower().strip()
+    elif yes:
+        prov = (cfg.provider or "").lower().strip()
+    else:
+        choices = _ordered_provider_choices(cfg)
+        default_provider = cfg.provider if cfg.provider in choices else choices[0]
+        if len(choices) == 1:
+            prov = choices[0]
+        else:
+            answer = questionary.select(
+                "Provider for this run",
+                choices=choices,
+                default=default_provider,
+            ).ask()
+            if not answer:
+                raise typer.Exit(1)
+            prov = answer.lower().strip()
+
+    if model:
+        mdl = model
+    else:
+        default_model = cfg.resolved_model(prov)
+        if yes or not default_model:
+            mdl = default_model
+        else:
+            answer = questionary.text(
+                f"Model for {prov} (Enter to keep default)",
+                default=default_model,
+            ).ask()
+            if answer is None:
+                raise typer.Exit(1)
+            mdl = answer.strip() or default_model
+
+    if not mdl:
+        console.print(f"[red]No model configured for provider {prov}.[/red]")
+        raise typer.Exit(1)
+    return prov, mdl
 
 
 def _run_resume_import(
@@ -665,8 +780,23 @@ def run(
         "-n",
         help="Override jobapply.toml `results_wanted`.",
     ),
-    provider: str | None = typer.Option(None, "--provider"),
-    model: str | None = typer.Option(None, "--model"),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help=(
+            "Pick one of the providers configured in jobapply.toml "
+            "(gemini | anthropic | openai | ollama | cloudflare | openrouter). "
+            "Defaults to the active `provider` field."
+        ),
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help=(
+            "Override the model id for this run. Defaults to the chosen "
+            "provider's `[providers.<name>].model` value."
+        ),
+    ),
     min_fit: float | None = typer.Option(
         None,
         "--min-fit",
@@ -711,11 +841,9 @@ def run(
         raise typer.Exit(1)
     title_list = [x.strip() for x in titles.split(",") if x.strip()]
     skill_list = [x.strip() for x in (skills or "").split(",") if x.strip()]
-    prov = (provider or cfg.provider).lower().strip()
-    mdl = model or cfg.resolved_model(prov)
-    if not mdl:
-        console.print(f"[red]No model configured for provider {prov}.[/red]")
-        raise typer.Exit(1)
+    prov, mdl = _resolve_provider_and_model(
+        cfg, provider=provider, model=model, yes=yes
+    )
 
     effective_results = results if results is not None else cfg.results_wanted
     effective_min_fit = min_fit if min_fit is not None else cfg.min_fit
@@ -818,7 +946,7 @@ def _validate_keys(cfg: AppConfig, provider: str) -> None:
             "Set [providers.cloudflare].account_id in jobapply.toml or "
             "CLOUDFLARE_ACCOUNT_ID in env.",
         )
-    if p in {"openai", "ollama"}:
+    if p in {"openai", "ollama", "openrouter"}:
         get_base_url(cfg, p)
 
 
@@ -971,8 +1099,23 @@ def tailor(
         "-s",
         help="Comma-separated skills to bias the tailor towards (in addition to the JD).",
     ),
-    provider: str | None = typer.Option(None, "--provider"),
-    model: str | None = typer.Option(None, "--model"),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help=(
+            "Pick one of the providers configured in jobapply.toml "
+            "(gemini | anthropic | openai | ollama | cloudflare | openrouter). "
+            "Defaults to the active `provider` field."
+        ),
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help=(
+            "Override the model id for this tailor run. Defaults to the "
+            "chosen provider's `[providers.<name>].model` value."
+        ),
+    ),
     no_pdf: bool = typer.Option(False, "--no-pdf", help="Skip PDF rendering."),
     with_email: bool = typer.Option(
         False,
@@ -1045,11 +1188,9 @@ def tailor(
         ).ask()
         email_context = ctx_answer if ctx_answer is not None else ""
 
-    prov = (provider or cfg.provider).lower().strip()
-    mdl = model or cfg.resolved_model(prov)
-    if not mdl:
-        console.print(f"[red]No model configured for provider {prov}.[/red]")
-        raise typer.Exit(1)
+    prov, mdl = _resolve_provider_and_model(
+        cfg, provider=provider, model=model, yes=yes
+    )
     _validate_keys(cfg, prov)
 
     effective_profile = profile_path or cfg.profile_path

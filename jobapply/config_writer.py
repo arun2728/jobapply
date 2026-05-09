@@ -50,6 +50,16 @@ def _provider_block(name: str, pc: ProviderConfig) -> str:
 
     if name == "ollama":
         lines.append("# Ollama is local; api_key usually empty. Adjust base_url if remote.\n")
+    elif name == "openrouter":
+        lines.append(
+            "# OpenRouter is an OpenAI-compatible router that exposes hundreds\n"
+            "# of models across vendors via `vendor/model` ids (e.g.\n"
+            "# `openai/gpt-4o-mini`, `anthropic/claude-3-5-sonnet`,\n"
+            "# `meta-llama/llama-3.3-70b-instruct`). Create an API key at\n"
+            "# https://openrouter.ai/keys. Browse models / pricing at\n"
+            "# https://openrouter.ai/models. The `api_key` field accepts\n"
+            '# the "env:VAR_NAME" indirection.\n',
+        )
     elif name == "cloudflare":
         lines.append(
             "# Workers AI uses an OpenAI-compatible /v1 endpoint per account.\n"

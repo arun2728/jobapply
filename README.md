@@ -35,7 +35,7 @@
 JobApply collapses the two most painful parts of a job search into a single command:
 
 1. **Find roles that actually match you** — across Indeed, LinkedIn, Google Jobs, ZipRecruiter, and Glassdoor (via [JobSpy](https://github.com/speedyapply/python-jobspy)).
-2. **Tailor your resume + cover letter for every match** — via a [LangGraph](https://github.com/langchain-ai/langgraph) pipeline that scores fit and rewrites your documents using **Gemini**, **Anthropic**, **OpenAI** (or any OpenAI-compatible gateway), **Ollama**, or **Cloudflare Workers AI**.
+2. **Tailor your resume + cover letter for every match** — via a [LangGraph](https://github.com/langchain-ai/langgraph) pipeline that scores fit and rewrites your documents using **Gemini**, **Anthropic**, **OpenAI** (or any OpenAI-compatible gateway), **Ollama**, **Cloudflare Workers AI**, or **OpenRouter** (one key, hundreds of models).
 
 ```bash
 jobapply run --titles "Backend Engineer,ML Engineer" --location "Remote" --yes
@@ -122,9 +122,9 @@ jobapply init --resume ~/Downloads/resume.pdf   # .md / .txt / .docx / .pdf
 jobapply run --titles "Backend Engineer,ML Engineer" --skills "Python,Kubernetes" --location "Remote" --yes
 ```
 
-`jobapply init` writes `jobapply.toml` and a structured `profile.json` extracted from your resume by the configured LLM. Open `profile.json` to fine-tune any field (name/email/links, experience bullets, skills, education entries with GPA & coursework, projects, etc.) — every key in the [`Profile` schema](jobapply/profile.py) maps 1:1 to what the resume tailor sees. Use `jobapply config` later to change provider/credentials, or `jobapply config --show` to print the resolved config.
+`jobapply init` writes `jobapply.toml` and a structured `profile.json` extracted from your resume by the configured LLM. The setup wizard lets you tick off **as many providers as you want** in one go (Gemini + OpenAI + Cloudflare, say) and pick which one is the default — every other provider is still configured and ready for `--provider <name>` at runtime. Open `profile.json` to fine-tune any field (name/email/links, experience bullets, skills, education entries with GPA & coursework, projects, etc.) — every key in the [`Profile` schema](jobapply/profile.py) maps 1:1 to what the resume tailor sees. Use `jobapply config` later to add/remove providers or change credentials, or `jobapply config --show` to print the resolved config.
 
-> Heads-up: `jobapply init` always calls your configured LLM to populate `profile.json`. Make sure your provider's API key works (or run an Ollama server locally) before invoking it. There is no Markdown fallback — the JSON is the source of truth.
+> Heads-up: `jobapply init` always calls your configured LLM to populate `profile.json`. Make sure the **default** provider's API key works (or run an Ollama server locally) before invoking it. There is no Markdown fallback — the JSON is the source of truth.
 
 ### `profile.json` schema
 
@@ -188,7 +188,7 @@ Empty list / empty string fields are allowed; the CLI prints required-vs-recomme
 
 ### Configuration
 
-`jobapply.toml` holds the active provider, model defaults, and per-provider connection details. Every secret accepts an indirection: `api_key = "env:OPENAI_API_KEY"` reads the value from the environment at runtime instead of storing it in the file. See [`jobapply.toml.example`](jobapply.toml.example) for a fully documented template covering all five providers.
+`jobapply.toml` holds the **active** provider plus a `[providers.<name>]` block for every provider you've configured. You can keep credentials for several providers side-by-side and flip between them per command via `--provider` (see [Switching providers per run](#switching-providers-per-run)). Every secret accepts an indirection: `api_key = "env:OPENAI_API_KEY"` reads the value from the environment at runtime instead of storing it in the file. See [`jobapply.toml.example`](jobapply.toml.example) for a fully documented template covering all six providers.
 
 | Provider | Required keys | Notes |
 |----------|---------------|-------|
@@ -197,6 +197,7 @@ Empty list / empty string fields are allowed; the CLI prints required-vs-recomme
 | `openai` | `api_key` (or `OPENAI_API_KEY` env) | `base_url` for OpenAI-compatible gateways (Azure, Together, Groq, …); set `max_tokens` if your gateway truncates structured outputs |
 | `ollama` | none | local; configure `base_url` (default `http://127.0.0.1:11434`) |
 | `cloudflare` | `api_key` (Workers AI token, or `CLOUDFLARE_API_TOKEN` env) **and** `account_id` (or `CLOUDFLARE_ACCOUNT_ID` env) | Two routing modes — see below. `max_tokens` defaults to 4096 to dodge Workers AI's tiny 256-token cap. |
+| `openrouter` | `api_key` (or `OPENROUTER_API_KEY` env) | One key, hundreds of models from many vendors. `model` uses `vendor/model` ids (e.g. `openai/gpt-4o-mini`, `anthropic/claude-3-5-sonnet`, `meta-llama/llama-3.3-70b-instruct`). Browse the catalog at [openrouter.ai/models](https://openrouter.ai/models). |
 
 #### Cloudflare routing modes
 
@@ -244,6 +245,50 @@ Workers AI exposes ~80 models; only the ones marked **Function calling** (i.e. s
 Avoid models flagged "Planned deprecation" (e.g. `@cf/meta/llama-3.1-70b-instruct`), code-tuned models like `qwen2.5-coder-32b-instruct` (wrong domain), and anything **without** a Function calling badge — `with_structured_output` will silently misbehave on those.
 
 `jobapply.toml` is gitignored by default. If you prefer env-only secrets, copy `.env.example` to `.env` and leave `api_key` lines commented out (or use `env:VAR_NAME`).
+
+#### Switching providers per run
+
+You don't have to commit to one LLM. Configure as many providers as you want in `jobapply.toml`:
+
+```toml
+provider = "openai"   # default when no --provider flag is passed
+
+[providers.openai]
+api_key = "env:OPENAI_API_KEY"
+model   = "gpt-4o-mini"
+
+[providers.anthropic]
+api_key = "env:ANTHROPIC_API_KEY"
+model   = "claude-3-5-haiku-latest"
+
+[providers.cloudflare]
+api_key    = "env:CLOUDFLARE_API_TOKEN"
+account_id = "env:CLOUDFLARE_ACCOUNT_ID"
+model      = "@cf/openai/gpt-oss-120b"
+
+[providers.openrouter]
+api_key = "env:OPENROUTER_API_KEY"
+model   = "openai/gpt-4o-mini"   # or any other vendor/model from openrouter.ai/models
+```
+
+Then pick a provider (and optionally a model) at the command line. `--provider` / `--model` win over the TOML defaults; both `jobapply run` and `jobapply tailor` accept them:
+
+```bash
+# Use the default (provider = "openai" in the toml above).
+jobapply run --titles "Backend Engineer" --yes
+
+# Same run, but route through Anthropic for this invocation.
+jobapply run --titles "Backend Engineer" --provider anthropic --yes
+
+# Override both — handy for trying a beefier model ad-hoc.
+jobapply tailor --job ~/jds/acme.pdf --provider openai --model gpt-4o
+
+# Drop --yes for an interactive picker of your configured providers
+# (and a prompt for the model, prefilled with the provider's default).
+jobapply run --titles "Backend Engineer"
+```
+
+The runtime picker only lists providers actually configured in `jobapply.toml`, so you won't accidentally pick a provider you have no credentials for.
 
 ### PDF rendering
 
@@ -305,10 +350,10 @@ After every run, `jobapply` writes `output/run-<id>/jobs.csv` with one row per j
 
 | Command | Description |
 |---------|-------------|
-| `jobapply init` | Interactive setup: provider + connection details + structured `profile.json`. **A resume is required**: pass `--resume <path>` (`.md` / `.txt` / `.docx` / `.pdf`, including LinkedIn PDF export) or `--paste` (read text from stdin / multiline prompt). The configured LLM extracts the resume into the [`Profile` schema](jobapply/profile.py) via structured output, so make sure your provider key is reachable before running it. `--non-interactive` skips provider prompts but still requires `--resume` or `--paste`. |
-| `jobapply config` | Re-run the provider prompts; `--show` prints the resolved config |
-| `jobapply run` | Full pipeline (prompts unless `--yes`) |
-| `jobapply tailor` | Tailor your resume + cover letter for **one** JD file (skip search). Optional `--with-email` drafts a ready-to-paste application email. See below. |
+| `jobapply init` | Interactive setup: pick **one or more** providers, fill in connection details, and import your resume into a structured `profile.json`. **A resume is required**: pass `--resume <path>` (`.md` / `.txt` / `.docx` / `.pdf`, including LinkedIn PDF export) or `--paste` (read text from stdin / multiline prompt). The default provider's LLM extracts the resume into the [`Profile` schema](jobapply/profile.py) via structured output, so make sure that provider's key is reachable before running it. `--non-interactive` skips provider prompts but still requires `--resume` or `--paste`. |
+| `jobapply config` | Re-run the multi-provider prompts (add/remove providers, change credentials, or pick a new default); `--show` prints the resolved config |
+| `jobapply run` | Full pipeline (prompts unless `--yes`). Use `--provider` / `--model` to override the default LLM for this run — see [Switching providers per run](#switching-providers-per-run). |
+| `jobapply tailor` | Tailor your resume + cover letter for **one** JD file (skip search). Accepts the same `--provider` / `--model` overrides as `run`. Optional `--with-email` drafts a ready-to-paste application email. See below. |
 | `jobapply resume <run-name>` | Continue from `meta.json` (default: reset checkpoint) |
 | `jobapply list` | List `output/run-*` folders |
 
@@ -341,7 +386,7 @@ Flags worth knowing:
 | `--with-email` | Also draft an application email. Requires `--email-to` (or use the interactive prompt). |
 | `--email-to` | Recipient email address for the drafted email. |
 | `--email-context` | Optional free-form context the model weaves in (referrals, availability, prior contact). |
-| `--provider` / `--model` | Override provider / model from `jobapply.toml`. |
+| `--provider` / `--model` | Override provider / model from `jobapply.toml` for this tailor run. See [Switching providers per run](#switching-providers-per-run). |
 
 Output layout (mirrors `jobapply run`'s per-job folder so the same PDF backends apply):
 

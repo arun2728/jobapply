@@ -84,6 +84,30 @@ def create_chat_model(
         base_url = get_base_url(cfg, "ollama") or "http://127.0.0.1:11434"
         return ChatOllama(model=model, base_url=base_url)
 
+    if p == "openrouter":
+        # OpenRouter is an OpenAI-compatible router (single API key, hundreds
+        # of models from many vendors). Reuse ChatOpenAI with the
+        # ``openrouter.ai/api/v1`` base URL.
+        from langchain_openai import ChatOpenAI
+
+        key = get_api_key(cfg, "openrouter")
+        if not key:
+            raise RuntimeError(
+                "Missing OpenRouter API key. Set [providers.openrouter].api_key in "
+                "jobapply.toml or OPENROUTER_API_KEY in env. Create one at "
+                "https://openrouter.ai/keys.",
+            )
+        base_url = get_base_url(cfg, "openrouter")
+        or_kwargs: dict[str, Any] = {
+            "model": model,
+            "api_key": key,
+            "base_url": base_url,
+        }
+        max_tokens = get_max_tokens(cfg, "openrouter")
+        if max_tokens is not None:
+            or_kwargs["max_tokens"] = max_tokens
+        return ChatOpenAI(**or_kwargs)
+
     if p == "cloudflare":
         # Workers AI exposes an OpenAI-compatible /v1 endpoint per account, so
         # we just point ChatOpenAI at it. The account id is interpolated into
