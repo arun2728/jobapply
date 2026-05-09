@@ -36,6 +36,7 @@ from jobapply.models import (
     RawJob,
 )
 from jobapply.nodes.persist import upsert_job_record, write_job_json
+from jobapply.profile import Profile, ProfileLoadError, load_profile
 from jobapply.nodes.render import (
     fill_cover_letter_tex,
     fill_resume_tex,
@@ -227,12 +228,26 @@ def process_one_node(state: GraphState) -> dict[str, Any]:
                 "log": [f"skipped low fit: {job.title} ({fit.score:.2f})"],
             }
 
+        # Best-effort load of the structured profile so the tailor
+        # agent can fall back to the source experience / projects
+        # when the LLM drops them. ``profile_path`` is set by
+        # ``cli.run`` at run-start; if the file is gone or malformed
+        # by the time we reach this job we just skip the safety net
+        # and let the LLM output stand.
+        struct_profile: Profile | None = None
+        prof_path_str = state.get("profile_path")
+        if isinstance(prof_path_str, str) and prof_path_str:
+            try:
+                struct_profile = load_profile(Path(prof_path_str))
+            except (ProfileLoadError, OSError):
+                struct_profile = None
         resume = tailor_resume(
             llm,
             profile_text=profile_text,
             job=job,
             skills=inp.skills,
             profile_skills=list(state.get("profile_skills") or []),
+            profile=struct_profile,
         )
         update_status(engine, job.job_id, LedgerStatus.tailored, run_id=state["run_id"])
 

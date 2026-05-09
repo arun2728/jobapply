@@ -2,12 +2,12 @@
 
 {% if contact_md %}{{ contact_md }}{% elif tr.contact_line %}{{ tr.contact_line }}{% endif %}
 
-## Skills
+{% if tr.skills %}## Skills
 
 {% for s in tr.skills %}- {{ s }}
 {% endfor %}
-
-## Experience
+{% endif %}
+{% if tr.experience %}## Experience
 
 {% for e in tr.experience %}
 ### {{ e.company }} — {{ e.role }}{% if e.dates %} ({{ e.dates }}){% endif %}
@@ -16,8 +16,8 @@
 {% endfor %}
 
 {% endfor %}
-
-## Projects
+{% endif %}
+{% if tr.projects %}## Projects
 
 {% for p in tr.projects %}
 ### {{ p.name }}
@@ -26,7 +26,7 @@
 {% endfor %}
 
 {% endfor %}
-
+{% endif %}
 {% if tr.education %}## Education
 
 {% for ed in tr.education %}

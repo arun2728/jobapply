@@ -45,6 +45,7 @@ from jobapply.nodes.render import (
     slug_from_paths,
     tex_to_pdf,
 )
+from jobapply.profile import Profile
 from jobapply.profile_import import (
     SUPPORTED_SUFFIXES,
     ResumeImportError,
@@ -422,6 +423,7 @@ def tailor_for_job_description(
     location_override: str | None = None,
     no_pdf: bool = False,
     email: TailorEmailRequest | None = None,
+    profile: Profile | None = None,
 ) -> TailorOutputs:
     """Tailor a resume + cover letter (and optionally an email) for one JD.
 
@@ -468,6 +470,7 @@ def tailor_for_job_description(
         job=job,
         skills=list(target_skills or []),
         profile_skills=profile_skills,
+        profile=profile,
     )
     cover = write_cover_letter(llm, profile_text=profile_text, job=job, resume=resume)
 

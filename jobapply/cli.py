@@ -1715,6 +1715,7 @@ def tailor(
             location_override=location_override,
             no_pdf=no_pdf,
             email=email_request,
+            profile=profile,
         )
     except JobDescriptionReadError as exc:
         console.print(f"[red]Job description error:[/red] {exc}")
