@@ -32,6 +32,76 @@ class JobSearchInput(BaseModel):
         default_factory=lambda: ["indeed", "linkedin", "google"],
         description="JobSpy site_name list.",
     )
+    linkedin_fetch_description: bool = Field(
+        True,
+        description=(
+            "Make JobSpy fetch the full LinkedIn job description page for "
+            "every hit. LinkedIn's search API only returns metadata; "
+            "without this flag the `description` field is blank, which "
+            "breaks downstream tailoring/scoring. Disable (slower → "
+            "faster) only if you're hitting LinkedIn rate limits."
+        ),
+    )
+
+
+class ApplicationHints(BaseModel):
+    """Recruiter-supplied application details parsed from the JD body.
+
+    Recruiters routinely embed instructions like "send your resume to
+    ``recruiter@acme.com``" and "mention subject line as 'Job
+    Application — Skillset'" directly in the description. We extract
+    them once at fetch time so ``jobapply tailor --with-email`` can
+    pre-fill ``--email-to`` and ``--email-context`` instead of making
+    the user copy-paste, and so ``jobs.csv`` can surface the
+    recipient address as its own triage column.
+
+    All fields default empty so the model is safe to attach
+    unconditionally — a JD with no application info just yields a
+    fully-default ``ApplicationHints`` rather than ``None``.
+    """
+
+    emails: list[str] = Field(
+        default_factory=list,
+        description="Every email address found in the JD, deduped, in source order.",
+    )
+    primary_email: str | None = Field(
+        None,
+        description=(
+            "The address most likely to be the recipient (closest to a "
+            "trigger phrase like 'send your resume to'). Falls back to "
+            "the first email when no trigger matched. ``None`` only when "
+            "no emails were found."
+        ),
+    )
+    subject_line: str | None = Field(
+        None,
+        description=(
+            "Subject line the recruiter asked applicants to use, if "
+            "they specified one (e.g. 'Job Application - Skillset')."
+        ),
+    )
+    instructions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Short sentences from the JD that contain explicit "
+            "application instructions (where to send, what to mention, "
+            "etc.). Capped at ~6 sentences to keep email-drafter "
+            "context focused."
+        ),
+    )
+
+    @property
+    def has_any(self) -> bool:
+        """True when at least one hint field is populated.
+
+        Lets callers cheaply skip prefill logic when the JD didn't
+        carry any apply-by-email info (the common case for postings
+        that go through an ATS rather than a direct recruiter
+        address).
+        """
+        return bool(
+            self.emails or self.primary_email or self.subject_line or self.instructions
+        )
 
 
 class RawJob(BaseModel):
@@ -48,6 +118,16 @@ class RawJob(BaseModel):
     apply_url: str | None = None
     site: str = ""
     date_posted: str | None = None
+    application: ApplicationHints | None = Field(
+        None,
+        description=(
+            "Application-by-email hints parsed from ``description`` "
+            "(see :class:`ApplicationHints`). Populated by "
+            "``iter_search_jobs`` / ``dedupe_node`` / "
+            "``tailor_one._load_job_from_json``. ``None`` for jobs "
+            "fetched before this field existed."
+        ),
+    )
     raw: dict[str, Any] = Field(default_factory=dict, description="Original row as dict.")
 
 
@@ -226,6 +306,7 @@ class JobRecord(BaseModel):
     site: str = ""
     status: LedgerStatus = LedgerStatus.pending
     fit: FitScore | None = None
+    application: ApplicationHints | None = None
     tailored_resume: TailoredResume | None = None
     cover_letter: CoverLetter | None = None
     networking: OutreachMessages | None = None

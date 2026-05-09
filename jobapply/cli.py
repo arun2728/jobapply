@@ -46,8 +46,12 @@ from jobapply.models import (
     LedgerStatus,
     RawJob,
 )
-from jobapply.nodes.persist import write_jobs_csv, write_jobs_csv_from_path
-from jobapply.nodes.render import probe_md_pdf_backend, probe_tex_pdf_backend
+from jobapply.nodes.persist import write_job_json, write_jobs_csv, write_jobs_csv_from_path
+from jobapply.nodes.render import (
+    probe_md_pdf_backend,
+    probe_tex_pdf_backend,
+    slug_from_paths,
+)
 from jobapply.profile import (
     Profile,
     ProfileLoadError,
@@ -70,13 +74,16 @@ from jobapply.profile_validation import (
 from jobapply.runner import run_pipeline
 from jobapply.tailor_one import (
     JD_SUPPORTED_SUFFIXES,
+    TAILOR_INPUT_SUFFIXES,
     JobDescriptionReadError,
     TailorEmailRequest,
+    peek_application_hints,
     tailor_for_job_description,
 )
+from jobapply.jd_extract import hints_to_email_context
 from jobapply import __version__
 from jobapply.llm import create_chat_model
-from jobapply.utils import atomic_write_json, profile_hash as profile_hash_fn
+from jobapply.utils import atomic_write_json, profile_hash as profile_hash_fn, slugify
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
@@ -831,6 +838,16 @@ def run(
     ),
     with_networking: bool = typer.Option(False, "--with-networking"),
     no_pdf: bool = typer.Option(False, "--no-pdf"),
+    linkedin_descriptions: bool = typer.Option(
+        True,
+        "--linkedin-descriptions/--no-linkedin-descriptions",
+        help=(
+            "Fetch the full LinkedIn JD per hit (slower, but required "
+            "for accurate scoring/tailoring). LinkedIn's search endpoint "
+            "only returns metadata, so disabling this leaves descriptions "
+            "blank. Default: on."
+        ),
+    ),
     force: bool = typer.Option(
         False,
         "--force",
@@ -892,6 +909,7 @@ def run(
         results_wanted=effective_results,
         hours_old=cfg.hours_old,
         site_names=cfg.sites,
+        linkedin_fetch_description=linkedin_descriptions,
     ).model_dump(mode="json")
     initial = {
         "run_id": run_id,
@@ -995,6 +1013,7 @@ def _record_from_raw_job(
         site=job.site,
         status=LedgerStatus.pending,
         fit=fit,
+        application=job.application,
         error=error,
         processed_at=datetime.now(UTC),
     )
@@ -1011,6 +1030,21 @@ def _flush_search_state(run_dir: Path, idx: JobsIndex) -> None:
     """
     atomic_write_json(run_dir / "jobs.json", idx.model_dump(mode="json"))
     write_jobs_csv(run_dir, idx)
+
+
+def _persist_job_record(run_dir: Path, record: JobRecord) -> Path:
+    """Write a per-job JSON to ``<run_dir>/jobs/<slug>/job.json``.
+
+    The file mirrors the ``JobRecord`` schema (so we get title /
+    company / location / description / URLs / fit score in one place)
+    and is the contract ``jobapply tailor --job <path>`` consumes —
+    users can pick a job out of a search batch and tailor against it
+    without re-pasting the JD anywhere.
+    """
+    slug = slugify(record.title, record.company, record.job_id)
+    job_dir = slug_from_paths(slug, run_dir)
+    write_job_json(job_dir, record.model_dump(mode="json"))
+    return job_dir / "job.json"
 
 
 def _print_top_matches(records: list[JobRecord], *, limit: int = 5) -> None:
@@ -1105,6 +1139,16 @@ def search_cmd(
         "-o",
         help="Override jobapply.toml `output_dir`. Artifacts land in <output>/search-<ts>/.",
     ),
+    linkedin_descriptions: bool = typer.Option(
+        True,
+        "--linkedin-descriptions/--no-linkedin-descriptions",
+        help=(
+            "Fetch the full LinkedIn JD per hit (slower, but required "
+            "for accurate scoring/tailoring). LinkedIn's search endpoint "
+            "only returns metadata, so disabling this leaves descriptions "
+            "blank. Default: on."
+        ),
+    ),
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Non-interactive defaults (skip prompts)."
     ),
@@ -1187,6 +1231,7 @@ def search_cmd(
         results_wanted=effective_results,
         hours_old=cfg.hours_old,
         site_names=site_list,
+        linkedin_fetch_description=linkedin_descriptions,
     )
 
     score_summary = (
@@ -1230,9 +1275,10 @@ def search_cmd(
 
     _flush_search_state(run_dir, idx)
     _write_meta(fetched=0)
+    jobs_subdir = run_dir / "jobs"
     console.print(
-        f"[dim]Streaming results to[/dim] {jobs_path} "
-        f"[dim]and[/dim] {csv_path}"
+        f"[dim]Streaming results to[/dim] {jobs_path}, {csv_path}, "
+        f"[dim]and per-job JSONs under[/dim] {jobs_subdir}"
     )
 
     records: list[JobRecord] = idx.jobs  # alias the live list
@@ -1246,7 +1292,9 @@ def search_cmd(
     ) as progress:
         task = progress.add_task("Searching job boards", total=None)
         for j in iter_search_jobs(search_input):
-            records.append(_record_from_raw_job(j))
+            rec = _record_from_raw_job(j)
+            records.append(rec)
+            _persist_job_record(run_dir, rec)
             _flush_search_state(run_dir, idx)
             _write_meta(fetched=len(records))
             progress.update(task, advance=1)
@@ -1282,6 +1330,7 @@ def search_cmd(
                     job_url=raw_record.job_url,
                     apply_url=raw_record.apply_url,
                     site=raw_record.site,
+                    application=raw_record.application,
                 )
                 fit: FitScore | None = None
                 err: str | None = None
@@ -1296,7 +1345,9 @@ def search_cmd(
                     # One bad job shouldn't kill the whole batch; record
                     # the failure on this row and keep going.
                     err = f"score failed: {exc}"
-                records[i] = _record_from_raw_job(job, fit=fit, error=err)
+                new_rec = _record_from_raw_job(job, fit=fit, error=err)
+                records[i] = new_rec
+                _persist_job_record(run_dir, new_rec)
                 _flush_search_state(run_dir, idx)
                 desc_label = (job.title or job.company or job.job_id)[:48]
                 progress.update(task, advance=1, description=f"Scoring {desc_label}")
@@ -1382,10 +1433,10 @@ def _validate_jd_path(raw: str) -> Path | None:
     if not expanded.is_file():
         console.print(f"[red]Not a file:[/red] {expanded}")
         return None
-    if expanded.suffix.lower() not in JD_SUPPORTED_SUFFIXES:
+    if expanded.suffix.lower() not in TAILOR_INPUT_SUFFIXES:
         console.print(
             f"[red]Unsupported job description format[/red] '{expanded.suffix}'. "
-            f"Use one of: {', '.join(JD_SUPPORTED_SUFFIXES)}.",
+            f"Use one of: {', '.join(TAILOR_INPUT_SUFFIXES)}.",
         )
         return None
     return expanded
@@ -1430,9 +1481,12 @@ def tailor(
         "--job",
         "-j",
         help=(
-            "Path to the job description "
-            f"({', '.join(JD_SUPPORTED_SUFFIXES)}). The configured LLM tailors "
-            "your resume + cover letter to it."
+            "Path to a job description "
+            f"({', '.join(JD_SUPPORTED_SUFFIXES)}) OR a saved per-job "
+            "JSON written by `jobapply search` / `jobapply run` "
+            "(e.g. output/search-<ts>/jobs/<slug>/job.json). "
+            "The configured LLM tailors your resume + cover letter "
+            "to it; passing a saved JSON skips the LLM JD-parser call."
         ),
     ),
     profile_path: str | None = typer.Option(
@@ -1512,6 +1566,13 @@ def tailor(
     tailored ``resume.md`` / ``resume.pdf`` (plus a styled LaTeX PDF) and
     matching ``cover_letter.*`` files under ``<output_dir>/tailor-<ts>/``.
 
+    ``--job`` also accepts a saved per-job JSON written by
+    ``jobapply search`` / ``jobapply run`` (the
+    ``output/search-<ts>/jobs/<slug>/job.json`` files): pick a row from
+    the search CSV, point ``tailor`` at its JSON, and the title /
+    company / location come straight from the search result with no
+    LLM JD-parser call.
+
     Add ``--with-email`` to also produce a ready-to-paste application
     email — the recipient address is required (``--email-to`` or
     interactive prompt). ``--email-context`` lets you weave in
@@ -1526,7 +1587,7 @@ def tailor(
     if not job_description and not yes:
         job_description = questionary.text(
             "Path to the job description "
-            f"({'/'.join(JD_SUPPORTED_SUFFIXES)})",
+            f"({'/'.join(JD_SUPPORTED_SUFFIXES)}) or a saved jobs/<slug>/job.json",
             default="",
         ).ask()
     if not job_description:
@@ -1539,23 +1600,58 @@ def tailor(
     if jd_path is None:
         raise typer.Exit(1)
 
-    if with_email and not email_to and not yes:
-        email_to = questionary.text(
-            "Recipient email address for the application email",
-            default="",
-        ).ask()
+    # Peek at the JD body BEFORE the email prompts so we can pre-fill
+    # `--email-to` / `--email-context` with the recipient + subject
+    # the recruiter embedded in the description (e.g. PwC's "Send
+    # your resume to kirthana.xx.tpr@pwc.com / Subject: Job
+    # Application — Skillset"). Failure is silent; we fall back to
+    # the original prompt behaviour.
+    detected_hints = peek_application_hints(jd_path) if with_email else None
+
+    if with_email and detected_hints and detected_hints.has_any:
+        bits: list[str] = []
+        if detected_hints.primary_email:
+            bits.append(f"recipient [bold]{detected_hints.primary_email}[/bold]")
+        if detected_hints.subject_line:
+            bits.append(f"subject '[bold]{detected_hints.subject_line}[/bold]'")
+        if bits:
+            console.print(
+                "[dim]Detected from JD:[/dim] " + ", ".join(bits) +
+                " [dim](override with --email-to / --email-context)[/dim]"
+            )
+
+    if with_email and not email_to:
+        if detected_hints and detected_hints.primary_email:
+            if yes:
+                email_to = detected_hints.primary_email
+            else:
+                email_to = questionary.text(
+                    "Recipient email address for the application email",
+                    default=detected_hints.primary_email,
+                ).ask()
+        elif not yes:
+            email_to = questionary.text(
+                "Recipient email address for the application email",
+                default="",
+            ).ask()
     if with_email and not (email_to or "").strip():
         console.print(
             "[red]--with-email requires --email-to[/red] "
             "(or rerun without --yes so we can prompt for it).",
         )
         raise typer.Exit(1)
-    if with_email and email_context is None and not yes:
-        ctx_answer = questionary.text(
-            "Any extra context for the email? (referrals, availability, etc.; blank to skip)",
-            default="",
-        ).ask()
-        email_context = ctx_answer if ctx_answer is not None else ""
+    if with_email and email_context is None:
+        suggested = (
+            hints_to_email_context(detected_hints) if detected_hints else ""
+        )
+        if yes:
+            email_context = suggested
+        else:
+            ctx_answer = questionary.text(
+                "Any extra context for the email? (referrals, availability, etc.; blank to skip)",
+                default=suggested,
+            ).ask()
+            email_context = ctx_answer if ctx_answer is not None else ""
 
     prov, mdl = _resolve_provider_and_model(
         cfg, provider=provider, model=model, yes=yes

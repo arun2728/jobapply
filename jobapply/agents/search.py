@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from jobapply.jd_extract import extract_application_hints
 from jobapply.models import JobSearchInput, RawJob
 from jobapply.utils import stable_job_id
 
@@ -28,9 +29,15 @@ def _scrape_once(
     results_wanted: int,
     hours_old: int,
     is_remote: bool,
+    linkedin_fetch_description: bool = True,
 ) -> list[dict[str, Any]]:
     from jobspy import scrape_jobs
 
+    # ``linkedin_fetch_description`` makes JobSpy issue an extra GET per
+    # LinkedIn hit to scrape the full JD off the public job-view page.
+    # JobSpy defaults this to False (fast, but `description` is blank
+    # for every LinkedIn row), which silently breaks `jobapply tailor`
+    # later — so we default to True and let the caller opt out.
     raw = scrape_jobs(
         site_name=site_name,
         search_term=search_term,
@@ -38,6 +45,7 @@ def _scrape_once(
         results_wanted=results_wanted,
         hours_old=hours_old,
         is_remote=is_remote,
+        linkedin_fetch_description=linkedin_fetch_description,
     )
     if hasattr(raw, "to_dict"):
         records = raw.to_dict("records")
@@ -70,6 +78,7 @@ def iter_search_jobs(inp: JobSearchInput) -> Iterator[RawJob]:
             results_wanted=per_title,
             hours_old=inp.hours_old,
             is_remote=inp.remote,
+            linkedin_fetch_description=inp.linkedin_fetch_description,
         )
         for row in rows:
             d = _row_to_dict(row)
@@ -90,16 +99,23 @@ def iter_search_jobs(inp: JobSearchInput) -> Iterator[RawJob]:
             if jid in seen:
                 continue
             seen.add(jid)
+            description = str(d.get("description") or "")
+            # Pull recipient email + subject-line / instruction hints
+            # out of the JD body so downstream `--with-email` can
+            # pre-fill `--email-to` / `--email-context` instead of
+            # making the user copy-paste from the description.
+            hints = extract_application_hints(description)
             yield RawJob(
                 job_id=jid,
                 title=title_s,
                 company=company,
                 location=location_s,
-                description=str(d.get("description") or ""),
+                description=description,
                 job_url=str(job_url) if job_url else None,
                 apply_url=str(apply_url) if apply_url else None,
                 site=site,
                 date_posted=str(d.get("date")) if d.get("date") else None,
+                application=hints if hints.has_any else None,
                 raw=d,
             )
             yielded += 1

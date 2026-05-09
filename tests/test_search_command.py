@@ -283,6 +283,70 @@ def test_search_with_score_requires_profile(
     assert not list((tmp_path / "output").glob("search-*/jobs.csv"))
 
 
+def test_search_writes_per_job_json_under_jobs_subdir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every fetched job should land at
+    ``<run_dir>/jobs/<slug>/job.json`` so users can hand the path to
+    ``jobapply tailor --job <path>`` later."""
+    monkeypatch.chdir(tmp_path)
+    _write_minimal_toml(tmp_path / "jobapply.toml")
+
+    fetched = [_raw("a1"), _raw("b2", title="Senior MLE", company="Globex")]
+    monkeypatch.setattr(cli_module, "iter_search_jobs", lambda inp: iter(fetched))
+
+    result = CliRunner().invoke(app, ["search", "--titles", "X", "--yes"])
+    assert result.exit_code == 0, result.output
+
+    run_dir = next((tmp_path / "output").glob("search-*"))
+    job_jsons = sorted((run_dir / "jobs").glob("*/job.json"))
+    assert len(job_jsons) == 2
+
+    titles = set()
+    for jp in job_jsons:
+        data = json.loads(jp.read_text(encoding="utf-8"))
+        # Per-job JSON carries a JobRecord — title + company + URL +
+        # description are the fields tailor cares about.
+        assert data["title"] in {"ML Engineer", "Senior MLE"}
+        assert data["company"] in {"Acme", "Globex"}
+        assert data["description"]
+        assert data["job_url"]
+        titles.add(data["title"])
+    assert titles == {"ML Engineer", "Senior MLE"}
+
+
+def test_search_per_job_json_includes_fit_score_when_scored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After --score, each per-job JSON should carry the fit block so
+    `jobapply tailor` (or any downstream tool) sees the same score
+    that's in the CSV."""
+    monkeypatch.chdir(tmp_path)
+    _write_minimal_toml(tmp_path / "jobapply.toml")
+    _write_minimal_profile(tmp_path / "profile.json")
+
+    monkeypatch.setattr(cli_module, "iter_search_jobs", lambda inp: iter([_raw("a1")]))
+    monkeypatch.setattr(cli_module, "create_chat_model", lambda *a, **kw: object())
+    monkeypatch.setattr(
+        cli_module,
+        "score_fit",
+        lambda *a, **kw: FitScore(score=0.77, rationale="strong"),
+    )
+
+    result = CliRunner().invoke(
+        app, ["search", "--titles", "X", "--score", "--yes"]
+    )
+    assert result.exit_code == 0, result.output
+
+    job_json = next((tmp_path / "output").glob("search-*/jobs/*/job.json"))
+    data = json.loads(job_json.read_text(encoding="utf-8"))
+    assert data["fit"] is not None
+    assert data["fit"]["score"] == pytest.approx(0.77)
+    assert data["fit"]["rationale"] == "strong"
+
+
 def test_search_persists_jobs_incrementally_during_fetch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

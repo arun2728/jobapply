@@ -14,6 +14,8 @@ the same way.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,7 +26,10 @@ from jobapply.agents.cover_letter import write_cover_letter
 from jobapply.agents.email_drafter import draft_application_email
 from jobapply.agents.jd_parser import parse_job_description
 from jobapply.agents.resume_tailor import tailor_resume
+from jobapply.jd_backfill import JdBackfillError, fetch_description_from_url
+from jobapply.jd_extract import extract_application_hints
 from jobapply.models import (
+    ApplicationHints,
     CoverLetter,
     EmailDraft,
     JobDescriptionMeta,
@@ -48,6 +53,18 @@ from jobapply.profile_import import (
 from jobapply.utils import slugify, stable_job_id
 
 JD_SUPPORTED_SUFFIXES: tuple[str, ...] = SUPPORTED_SUFFIXES
+
+#: Suffix used by the per-job JSON files written by ``jobapply search`` /
+#: ``jobapply run`` (see ``cli._persist_job_record`` and
+#: ``graph_nodes.dedupe_node``). Passing one of these into
+#: ``jobapply tailor --job <path>`` short-circuits the LLM JD parser
+#: because we already have structured title / company / location.
+JOB_JSON_SUFFIX = ".json"
+
+#: Full set of suffixes ``jobapply tailor --job <path>`` accepts. The CLI
+#: validates against this; ``read_job_description_text`` still rejects
+#: ``.json`` because that path goes through the structured loader below.
+TAILOR_INPUT_SUFFIXES: tuple[str, ...] = (*JD_SUPPORTED_SUFFIXES, JOB_JSON_SUFFIX)
 
 
 class JobDescriptionReadError(RuntimeError):
@@ -152,6 +169,175 @@ def _resolve_meta(
     )
 
 
+def _backfill_description(
+    data: dict[str, object],
+    *,
+    fetcher: Callable[[str], str | None] = fetch_description_from_url,
+) -> str | None:
+    """Try ``apply_url`` then ``job_url`` to recover a missing JD body.
+
+    Split out from :func:`_load_job_from_json` so tests can inject a
+    deterministic fetcher. Returns the first non-empty result or
+    ``None``. Network/parse failures raised by the underlying
+    ``httpx`` call are swallowed by the fetcher (returns ``None``);
+    only :class:`~jobapply.jd_backfill.JdBackfillError` (raised on
+    truly malformed URLs) propagates as ``None`` here.
+    """
+    for key in ("apply_url", "job_url"):
+        candidate = data.get(key)
+        if not isinstance(candidate, str) or not candidate.strip():
+            continue
+        try:
+            text = fetcher(candidate)
+        except JdBackfillError:
+            continue
+        if text and text.strip():
+            return text
+    return None
+
+
+def _load_job_from_json(
+    path: Path,
+    *,
+    fetcher: Callable[[str], str | None] | None = None,
+) -> RawJob:
+    """Load a per-job JSON written by ``jobapply search`` / ``jobapply run``.
+
+    Tolerant of both the bare :class:`RawJob` shape (what
+    ``graph_nodes.dedupe_node`` writes) and the richer
+    :class:`~jobapply.models.JobRecord` shape (what
+    ``cli._persist_job_record`` writes from ``search`` — that one also
+    carries a ``fit`` block, which we ignore). Missing optional fields
+    fall back to sensible defaults so partially-populated files still
+    work.
+
+    When the saved JSON has an empty ``description`` we attempt a
+    best-effort backfill from ``apply_url`` / ``job_url`` (LinkedIn,
+    Indeed, etc.). On success we rewrite the file in place so future
+    tailor runs are instant; on failure we raise the same
+    :class:`JobDescriptionReadError` the user used to see, with a
+    pointer to ``--no-linkedin-descriptions`` / pasting the JD as a
+    workaround.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise JobDescriptionReadError(
+            f"Could not read saved job JSON at {path}: {exc}",
+        ) from exc
+    if not isinstance(data, dict):
+        raise JobDescriptionReadError(
+            f"Saved job JSON at {path} must be a JSON object, got {type(data).__name__}.",
+        )
+
+    description = str(data.get("description") or "")
+    description_was_recovered = False
+    if not description.strip():
+        backfill_fn = fetcher or fetch_description_from_url
+        recovered = _backfill_description(data, fetcher=backfill_fn)
+        if recovered:
+            description = recovered
+            data["description"] = recovered
+            description_was_recovered = True
+        else:
+            raise JobDescriptionReadError(
+                f"Saved job JSON at {path} has no `description` field and "
+                "the URL backfill couldn't recover it (LinkedIn auth wall, "
+                "page gone, or a non-public board). Re-run `jobapply "
+                "search` (LinkedIn descriptions are fetched by default "
+                "now), or pass a JD file (.md/.txt/.docx/.pdf) with "
+                "`jobapply tailor --job <file>` instead.",
+            )
+
+    # Application-hint resolution: prefer the persisted block when
+    # present (fresh search runs already ran the extractor), but
+    # always re-extract when the description was recovered via URL
+    # backfill since that text wasn't seen by the search-side
+    # extractor. Legacy job.json files (no `application` field) get
+    # extraction here too so old artifacts benefit from the feature
+    # without requiring a re-search.
+    application: ApplicationHints | None = None
+    raw_app = data.get("application")
+    if isinstance(raw_app, dict) and not description_was_recovered:
+        try:
+            application = ApplicationHints.model_validate(raw_app)
+        except (ValueError, TypeError):
+            application = None
+    if application is None and description.strip():
+        hints = extract_application_hints(description)
+        if hints.has_any:
+            application = hints
+
+    # Re-write the JSON when we changed it (recovered description
+    # and/or freshly-extracted hints) so subsequent runs are instant
+    # and downstream tooling sees the same data.
+    needs_rewrite = description_was_recovered or (
+        application is not None and not isinstance(raw_app, dict)
+    )
+    if needs_rewrite:
+        if application is not None:
+            data["application"] = application.model_dump(mode="json")
+        try:
+            path.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError:
+            # Best-effort: failing to persist isn't fatal — the
+            # tailor run still gets the recovered text in-memory.
+            pass
+
+    return RawJob(
+        job_id=str(data.get("job_id") or ""),
+        title=str(data.get("title") or ""),
+        company=str(data.get("company") or ""),
+        location=str(data.get("location") or ""),
+        description=description,
+        job_url=data.get("job_url") if isinstance(data.get("job_url"), str) else None,
+        apply_url=data.get("apply_url") if isinstance(data.get("apply_url"), str) else None,
+        site=str(data.get("site") or ""),
+        date_posted=data.get("date_posted") if isinstance(data.get("date_posted"), str) else None,
+        application=application,
+    )
+
+
+def peek_application_hints(jd_path: Path) -> ApplicationHints:
+    """Cheaply extract application hints from ``jd_path`` without LLM calls.
+
+    The CLI calls this *before* prompting for ``--email-to`` /
+    ``--email-context`` so it can pre-fill those prompts with a
+    recipient + subject the recruiter embedded in the JD body. The
+    function never raises: any IO / parse failure yields an empty
+    :class:`ApplicationHints` so the CLI degrades to its old
+    "ask the user" behaviour.
+
+    Both supported ``--job`` shapes are handled:
+
+    * Saved per-job ``job.json``: prefer the persisted ``application``
+      block, fall back to extracting from ``description``.
+    * Raw JD files (``.md`` / ``.txt`` / ``.docx`` / ``.pdf``): read
+      the text and run the extractor.
+    """
+    try:
+        if jd_path.suffix.lower() == JOB_JSON_SUFFIX:
+            data = json.loads(jd_path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return ApplicationHints()
+            raw_app = data.get("application")
+            if isinstance(raw_app, dict):
+                try:
+                    cached = ApplicationHints.model_validate(raw_app)
+                except (ValueError, TypeError):
+                    cached = ApplicationHints()
+                if cached.has_any:
+                    return cached
+            return extract_application_hints(str(data.get("description") or ""))
+        text = read_job_description_text(jd_path)
+    except (OSError, ValueError, JobDescriptionReadError):
+        return ApplicationHints()
+    return extract_application_hints(text)
+
+
 def _build_raw_job(text: str, meta: JobDescriptionMeta) -> RawJob:
     """Wrap the JD text + metadata in a synthetic :class:`RawJob`.
 
@@ -159,6 +345,8 @@ def _build_raw_job(text: str, meta: JobDescriptionMeta) -> RawJob:
     `draft_application_email`) all consume ``RawJob`` instances, so we
     fabricate one. ``site`` is hard-coded to ``"local"`` and ``job_id``
     is derived from the stable hash so re-runs land in the same slug.
+    Application hints are extracted from the JD body so
+    ``--with-email`` benefits the same way the search/JSON paths do.
     """
     title = meta.title or "Tailored Application"
     company = meta.company or "Unknown Company"
@@ -171,6 +359,7 @@ def _build_raw_job(text: str, meta: JobDescriptionMeta) -> RawJob:
         apply_url=None,
         job_url=None,
     )
+    hints = extract_application_hints(text)
     return RawJob(
         job_id=job_id,
         title=title,
@@ -178,6 +367,7 @@ def _build_raw_job(text: str, meta: JobDescriptionMeta) -> RawJob:
         location=location,
         description=text,
         site="local",
+        application=hints if hints.has_any else None,
     )
 
 
@@ -239,16 +429,35 @@ def tailor_for_job_description(
     everything under ``output_root / <slug>/``. Returns a
     :class:`TailorOutputs` describing every file produced so the CLI can
     print a nice summary table.
+
+    ``jd_path`` accepts two shapes:
+
+    * A free-form JD file (``.md`` / ``.txt`` / ``.docx`` / ``.pdf``).
+      The LLM JD parser fills in title / company / location.
+    * A saved per-job ``job.json`` (written by ``jobapply search`` or
+      ``jobapply run``). Title / company / location are taken straight
+      from the file, skipping the JD-parser LLM call entirely.
     """
-    raw_text = read_job_description_text(jd_path)
-    meta = _resolve_meta(
-        raw_text=raw_text,
-        title_override=title_override,
-        company_override=company_override,
-        location_override=location_override,
-        llm=llm,
-    )
-    job = _build_raw_job(raw_text, meta)
+    if jd_path.suffix.lower() == JOB_JSON_SUFFIX:
+        job = _load_job_from_json(jd_path)
+        # CLI overrides still win (lets users tweak metadata without
+        # editing the JSON).
+        if title_override and title_override.strip():
+            job.title = title_override.strip()
+        if company_override and company_override.strip():
+            job.company = company_override.strip()
+        if location_override and location_override.strip():
+            job.location = location_override.strip()
+    else:
+        raw_text = read_job_description_text(jd_path)
+        meta = _resolve_meta(
+            raw_text=raw_text,
+            title_override=title_override,
+            company_override=company_override,
+            location_override=location_override,
+            llm=llm,
+        )
+        job = _build_raw_job(raw_text, meta)
 
     slug = slugify(job.title, job.company, job.job_id)
     job_dir = slug_from_paths(slug, output_root)

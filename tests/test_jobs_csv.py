@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from jobapply.models import (
+    ApplicationHints,
     FitScore,
     JobArtifacts,
     JobRecord,
@@ -181,3 +182,48 @@ def test_csv_quotes_commas_in_fields(tmp_path: Path) -> None:
     # csv.DictWriter with QUOTE_MINIMAL wraps fields containing commas in quotes.
     assert '"Engineer, ML & AI"' in raw
     assert '"Has Python, Go, and Rust"' in raw
+
+
+def test_csv_includes_application_columns_in_header() -> None:
+    """The new apply-by-email columns must show up so triagers can
+    spot direct-recruiter postings in Sheets."""
+    assert "application_email" in CSV_FIELDS
+    assert "application_subject" in CSV_FIELDS
+    assert "application_instructions" in CSV_FIELDS
+
+
+def test_application_hints_emit_into_dedicated_columns(tmp_path: Path) -> None:
+    """When a record carries an ``ApplicationHints`` block, the CSV
+    row must surface the recipient + subject + joined instructions."""
+    idx = _make_index()
+    rec = _done_record("hints1", 0.7)
+    rec.application = ApplicationHints(
+        emails=["recruiter@acme.com", "hr@acme.com"],
+        primary_email="recruiter@acme.com",
+        subject_line="Backend Application",
+        instructions=[
+            "Please send your resume to recruiter@acme.com.",
+            "Mention your notice period.",
+        ],
+    )
+    idx.jobs = [rec]
+    write_jobs_csv(tmp_path, idx)
+    rows = list(csv.DictReader((tmp_path / "jobs.csv").open(encoding="utf-8")))
+    assert rows[0]["application_email"] == "recruiter@acme.com"
+    assert rows[0]["application_subject"] == "Backend Application"
+    assert "send your resume" in rows[0]["application_instructions"]
+    assert "notice period" in rows[0]["application_instructions"]
+    # Multi-instruction rows are " | "-joined to keep them on one line.
+    assert " | " in rows[0]["application_instructions"]
+
+
+def test_application_columns_default_to_empty(tmp_path: Path) -> None:
+    """Records with no ``application`` block should leave the columns
+    empty, not 'None' or any placeholder."""
+    idx = _make_index()
+    idx.jobs = [_done_record("noapp", 0.5)]
+    write_jobs_csv(tmp_path, idx)
+    rows = list(csv.DictReader((tmp_path / "jobs.csv").open(encoding="utf-8")))
+    assert rows[0]["application_email"] == ""
+    assert rows[0]["application_subject"] == ""
+    assert rows[0]["application_instructions"] == ""

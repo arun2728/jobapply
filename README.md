@@ -390,24 +390,49 @@ Flags worth knowing:
 | `--provider` / `--model` | Pick the LLM for scoring. Optional — defaults to the active provider in `jobapply.toml`. Only used with `--score`. |
 | `--profile` | Override `profile_path` from the toml. Only used with `--score`. |
 | `--output-dir` / `-o` | Override `output_dir`. Artifacts land in `<output_dir>/search-<timestamp>/`. |
+| `--linkedin-descriptions` / `--no-linkedin-descriptions` | LinkedIn's search endpoint only returns metadata, so by default we issue an extra GET per LinkedIn hit to scrape the full job description. Disable with `--no-linkedin-descriptions` for a faster crawl, but downstream `--score` and `jobapply tailor` won't have a JD to work with. |
 | `--yes` / `-y` | Skip the interactive title/skills/location/provider prompts. |
 
 Output layout:
 
 ```text
 output/search-<timestamp>/
-├── jobs.json   # full JobsIndex (every fetched job + optional FitScore)
-├── jobs.csv    # Google-Sheets-friendly summary, sorted by descending fit
-└── meta.json   # search input snapshot + provider/model used
+├── jobs.json                     # full JobsIndex (every fetched job + optional FitScore)
+├── jobs.csv                      # Google-Sheets-friendly summary, sorted by descending fit
+├── meta.json                     # search input snapshot + provider/model used
+└── jobs/
+    └── <slug>/job.json           # one structured file per fetched job
 ```
 
-The CSV always carries `title`, `company`, `location`, `site`, `url`, `apply_url`, and `description` columns; with `--score` you also get `fit_score`, `fit_rationale`, and `missing_keywords`. Rows are sorted by descending fit score so the most promising matches surface at the top when you import into Google Sheets via **File → Import → Upload**. The CLI prints a "Top 5 matches" table inline too, so you can eyeball the best candidates without leaving the terminal.
+The CSV always carries `title`, `company`, `location`, `site`, `url`, `apply_url`, `application_email`, `application_subject`, `application_instructions`, and `description` columns; with `--score` you also get `fit_score`, `fit_rationale`, and `missing_keywords`. Rows are sorted by descending fit score so the most promising matches surface at the top when you import into Google Sheets via **File → Import → Upload**. The CLI prints a "Top 5 matches" table inline too, so you can eyeball the best candidates without leaving the terminal.
+
+> **Apply-by-email auto-detection.** When the JD body contains explicit instructions like *"Please send your resume to recruiter@acme.com"* or *"Mention subject line as 'Job Application — Skillset'"*, jobapply parses them out at fetch time and stores them under `application` in `jobs.json` and as `application_email` / `application_subject` / `application_instructions` columns in the CSV. Direct-recruiter postings stand out at a glance during triage, and `jobapply tailor --with-email` will use the same data to pre-fill `--email-to` and `--email-context` (see below).
+
+Each fetched job also lands as its own `jobs/<slug>/job.json`. That's the file you hand to `jobapply tailor --job <path>` to tailor your resume against a specific search hit — title / company / location come straight from the JSON so the LLM JD-parser call is skipped (see the [tailor section](#jobapply-tailor--single-jd-mode) below).
 
 > Without `--score`, no LLM is called — `jobapply search` works without provider credentials or a `profile.json`. This is the right command to run when you just want to see what's out there.
 
 ### `jobapply tailor` — single-JD mode
 
 When you already know which role you want to apply to, `jobapply tailor` skips the search / dedupe / ledger machinery and tailors your resume + cover letter directly against a job-description file you supply. Add `--with-email` to also produce a ready-to-paste application email.
+
+`--job` accepts two shapes:
+
+1. A **free-form JD file** (`.md` / `.txt` / `.docx` / `.pdf`) — the LLM JD parser fills in title / company / location.
+2. A **saved per-job JSON** written by `jobapply search` or `jobapply run` (the `output/<run>/jobs/<slug>/job.json` files) — title / company / location come straight from the file, skipping the JD-parser LLM call entirely. This is the "search → triage → tailor" workflow:
+
+```bash
+# 1. Fetch (and optionally score) jobs.
+jobapply search --titles "Backend Engineer" --score --yes
+
+# 2. Open output/search-<ts>/jobs.csv, pick the row you like, copy the job_id.
+#    Each row maps to a folder under output/search-<ts>/jobs/<slug>/.
+
+# 3. Tailor your resume + cover letter against that exact job — no JD file needed.
+jobapply tailor --job output/search-20260509-180000/jobs/backend-engineer-acme-abc123/job.json
+```
+
+> **Empty descriptions auto-recover.** If the saved `job.json` was written before LinkedIn descriptions were fetched (or the JD is otherwise blank), `jobapply tailor` does a one-shot `httpx` GET of the saved `apply_url` / `job_url`, parses the JD out of the public job page, and rewrites the JSON in place — so the next run is instant. If the URL is paywalled or gone, you'll get a friendly error pointing you at `--job <jd-file>` as a manual fallback.
 
 ```bash
 # Resume + cover letter only.
@@ -421,19 +446,25 @@ jobapply tailor \
   --email-context "Referred by Bob — available to start in two weeks."
 ```
 
+> **Recipient + subject auto-prefill.** If the JD body contains *"Send your resume to ..."* / *"Mention subject line as ..."* (very common for direct-recruiter postings on LinkedIn), `jobapply tailor --with-email` will detect the recipient address and the recruiter's preferred subject line and pre-fill `--email-to` / `--email-context` automatically. With `--yes` we use the detected values directly; in interactive mode they appear as the prompt defaults so you can confirm or edit. Pass `--email-to` / `--email-context` explicitly to override. Example output:
+>
+> ```text
+> Detected from JD: recipient kirthana.xx.tpr@pwc.com, subject 'Job Application- Skillset' (override with --email-to / --email-context)
+> ```
+
 Flags worth knowing:
 
 | Flag | Description |
 |------|-------------|
-| `--job` / `-j` | Path to the job description (`.md` / `.txt` / `.docx` / `.pdf`). Required. |
+| `--job` / `-j` | Path to a job description (`.md` / `.txt` / `.docx` / `.pdf`) **or** a saved per-job `job.json` (`output/<run>/jobs/<slug>/job.json` from `jobapply search`/`run`). Required. |
 | `--title` / `--company` / `--location` | Skip LLM JD-metadata extraction by forcing these values. |
 | `--skills` / `-s` | Comma-separated skills to bias the tailor towards (in addition to the JD content). |
 | `--profile` | Override `profile_path` from `jobapply.toml` (must point at `profile.json`). |
 | `--output-dir` / `-o` | Override `output_dir`. Artifacts land in `<output_dir>/tailor-<timestamp>/<slug>/`. |
 | `--no-pdf` | Skip the markdown-PDF + LaTeX-PDF pipelines (only `.md` / `.tex` are written). |
-| `--with-email` | Also draft an application email. Requires `--email-to` (or use the interactive prompt). |
-| `--email-to` | Recipient email address for the drafted email. |
-| `--email-context` | Optional free-form context the model weaves in (referrals, availability, prior contact). |
+| `--with-email` | Also draft an application email. Auto-detects recipient + subject from the JD body; falls back to `--email-to` / interactive prompt when nothing is found. |
+| `--email-to` | Recipient email address for the drafted email. Overrides any auto-detected value. |
+| `--email-context` | Optional free-form context the model weaves in (referrals, availability, prior contact). When omitted, defaults to any subject-line / instructions detected in the JD. |
 | `--provider` / `--model` | Override provider / model from `jobapply.toml` for this tailor run. See [Switching providers per run](#switching-providers-per-run). |
 
 Output layout (mirrors `jobapply run`'s per-job folder so the same PDF backends apply):

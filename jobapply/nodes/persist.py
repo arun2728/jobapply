@@ -52,6 +52,14 @@ CSV_FIELDS: tuple[str, ...] = (
     "missing_keywords",
     "url",
     "apply_url",
+    # Recruiter-supplied apply-by-email info, parsed from the JD
+    # body. Surfaces here so triagers can spot direct-recruiter
+    # postings (high-signal!) at a glance in Sheets — and
+    # `--with-email` tailoring can pull from the same source of
+    # truth.
+    "application_email",
+    "application_subject",
+    "application_instructions",
     "description",
     "resume_md",
     "resume_pdf",
@@ -72,6 +80,7 @@ _DESCRIPTION_TRUNC = 1000
 def _flatten_record(record: JobRecord, run_id: str) -> dict[str, str]:
     fit = record.fit
     art = record.artifacts
+    app = record.application
     raw_desc = (record.description or "").replace("\r", "")
     description = raw_desc.strip()
     if len(description) > _DESCRIPTION_TRUNC:
@@ -79,6 +88,17 @@ def _flatten_record(record: JobRecord, run_id: str) -> dict[str, str]:
     processed = ""
     if record.processed_at is not None:
         processed = record.processed_at.isoformat()
+    # Apply-by-email columns: prefer the heuristically-picked
+    # primary, fall back to comma-joining the rest so users still
+    # see *something* if our trigger-phrase scoring guessed wrong.
+    if app:
+        application_email = app.primary_email or (app.emails[0] if app.emails else "")
+        application_subject = app.subject_line or ""
+        application_instructions = " | ".join(app.instructions)
+    else:
+        application_email = ""
+        application_subject = ""
+        application_instructions = ""
     row: dict[str, str] = {
         "run_id": run_id,
         "job_id": record.job_id,
@@ -93,6 +113,9 @@ def _flatten_record(record: JobRecord, run_id: str) -> dict[str, str]:
         "missing_keywords": ", ".join(fit.missing_keywords) if fit else "",
         "url": record.job_url or record.apply_url or "",
         "apply_url": record.apply_url or "",
+        "application_email": application_email,
+        "application_subject": application_subject,
+        "application_instructions": application_instructions,
         "description": description,
         "resume_md": art.resume_md or "",
         "resume_pdf": art.resume_pdf or "",

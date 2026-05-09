@@ -166,3 +166,47 @@ def test_dedupe_force_bypasses_cached_path(tmp_path: Path, fake_raw_job: dict[st
     out = dedupe_node(initial)
     assert len(out["queue"]) == 1, "force=True must enqueue the job"
     assert not out.get("results"), "force=True must not emit cached records"
+
+
+def test_dedupe_writes_per_job_json_for_cached_records(
+    tmp_path: Path, fake_raw_job: dict[str, Any]
+) -> None:
+    """Cached records still need a `<run_dir>/jobs/<slug>/job.json` so
+    the user can later run `jobapply tailor --job <path>` against
+    them without re-fetching."""
+    from jobapply.graph_nodes import dedupe_node
+
+    ledger = tmp_path / "ledger.db"
+    engine = get_engine(ledger)
+    init_db(engine)
+    profile_hash = "abc123"
+
+    upsert_pending(
+        engine,
+        job_id=fake_raw_job["job_id"],
+        profile_hash=profile_hash,
+        site=fake_raw_job["site"],
+        company=fake_raw_job["company"],
+        title=fake_raw_job["title"],
+        location=fake_raw_job["location"],
+        apply_url=fake_raw_job["apply_url"],
+        job_url=fake_raw_job["job_url"],
+        run_id="run-prior",
+    )
+    update_status(engine, fake_raw_job["job_id"], LedgerStatus.done, run_id="run-prior")
+
+    initial = _initial_state(
+        tmp_path=tmp_path,
+        job_dump=fake_raw_job,
+        ledger_path=ledger,
+        profile_hash=profile_hash,
+    )
+    dedupe_node(initial)
+
+    run_dir = Path(initial["run_dir"])
+    job_jsons = list((run_dir / "jobs").glob("*/job.json"))
+    assert len(job_jsons) == 1
+    data = json.loads(job_jsons[0].read_text(encoding="utf-8"))
+    assert data["title"] == fake_raw_job["title"]
+    assert data["company"] == fake_raw_job["company"]
+    assert data["description"]

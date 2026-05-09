@@ -17,6 +17,7 @@ from jobapply.agents.resume_tailor import tailor_resume
 from jobapply.agents.search import search_jobs
 from jobapply.config import load_config
 from jobapply.graph_state import GraphState
+from jobapply.jd_extract import extract_application_hints
 from jobapply.ledger import (
     JobLedgerEntry,
     get_engine,
@@ -103,6 +104,20 @@ def dedupe_node(state: GraphState) -> dict[str, Any]:
 
     for d in raw_dicts:
         job = RawJob.model_validate(d)
+        # Backfill application hints for jobs that came in without
+        # them (e.g. legacy state restored by ``jobapply resume``);
+        # ``iter_search_jobs`` already sets this for fresh batches.
+        if job.application is None and job.description:
+            hints = extract_application_hints(job.description)
+            if hints.has_any:
+                job.application = hints
+        # Persist a per-job JSON for every fetched job so users can hand
+        # the path to `jobapply tailor --job <path>` later. We do this
+        # for cached jobs too — they're the ones most likely to be
+        # tailored ad-hoc since the run flow won't process them again.
+        _job_dir = slug_from_paths(slugify(job.title, job.company, job.job_id), run_dir)
+        write_job_json(_job_dir, job.model_dump(mode="json"))
+
         if not force and should_skip(engine, job.job_id, ph, skip_if_done=True):
             with Session(engine) as session:
                 row = session.get(JobLedgerEntry, job.job_id)
@@ -131,6 +146,7 @@ def dedupe_node(state: GraphState) -> dict[str, Any]:
                 apply_url=job.apply_url,
                 site=job.site,
                 status=prior_status,
+                application=job.application,
                 artifacts=JobArtifacts.model_validate(
                     {k: v for k, v in paths_json.items() if v},
                 ),
@@ -200,6 +216,7 @@ def process_one_node(state: GraphState) -> dict[str, Any]:
                 site=job.site,
                 status=LedgerStatus.skipped,
                 fit=fit,
+                application=job.application,
                 processed_at=datetime.now(UTC),
             )
             upsert_job_record(run_dir, template_index, rec)
@@ -280,6 +297,7 @@ def process_one_node(state: GraphState) -> dict[str, Any]:
             site=job.site,
             status=LedgerStatus.done,
             fit=fit,
+            application=job.application,
             tailored_resume=resume,
             cover_letter=cover,
             networking=networking,
@@ -311,6 +329,7 @@ def process_one_node(state: GraphState) -> dict[str, Any]:
             apply_url=job.apply_url,
             site=job.site,
             status=LedgerStatus.failed,
+            application=job.application,
             error=f"{e}\n{tb}",
             processed_at=datetime.now(UTC),
         )
