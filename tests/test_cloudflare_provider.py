@@ -13,6 +13,7 @@ import pytest
 from jobapply.config import (
     CLOUDFLARE_BASE_URL_TEMPLATE,
     CLOUDFLARE_GATEWAY_BASE_URL_TEMPLATE,
+    DEFAULT_MAX_TOKENS,
     DEFAULT_MODELS,
     PROVIDER_NAMES,
     AppConfig,
@@ -23,6 +24,7 @@ from jobapply.config import (
     get_api_key,
     get_base_url,
     get_gateway_id,
+    get_max_tokens,
 )
 from jobapply.config_writer import render_config_toml
 from jobapply.llm import create_chat_model
@@ -291,3 +293,104 @@ def test_create_chat_model_cloudflare_requires_account_id(
     )
     with pytest.raises(RuntimeError, match="Cloudflare account id"):
         create_chat_model("cloudflare", "@cf/meta/llama-3.1-8b-instruct", cfg)
+
+
+# ---------------------------------------------------------------------------
+# max_tokens — Workers AI's compat endpoint defaults to 256 tokens, which
+# truncates structured-output JSON. The factory must apply a sane fallback.
+# ---------------------------------------------------------------------------
+
+
+def test_default_max_tokens_for_cloudflare_is_set() -> None:
+    """Sanity-check the constant the factory falls back to."""
+    assert DEFAULT_MAX_TOKENS["cloudflare"] >= 1024
+
+
+def test_get_max_tokens_returns_default_for_cloudflare() -> None:
+    """Without an explicit override we return the bundled default so
+    Workers AI's 256-token cap doesn't truncate structured outputs."""
+    cfg = AppConfig(providers={"cloudflare": ProviderConfig(api_key="t", account_id="a")})
+    assert get_max_tokens(cfg, "cloudflare") == DEFAULT_MAX_TOKENS["cloudflare"]
+
+
+def test_get_max_tokens_honors_user_override() -> None:
+    cfg = AppConfig(
+        providers={
+            "cloudflare": ProviderConfig(
+                api_key="t",
+                account_id="a",
+                max_tokens=8192,
+            )
+        }
+    )
+    assert get_max_tokens(cfg, "cloudflare") == 8192
+
+
+def test_get_max_tokens_returns_none_for_providers_without_default() -> None:
+    """Providers like ``openai`` / ``anthropic`` have generous SDK defaults
+    of their own — we should NOT silently impose a cap on them."""
+    cfg = AppConfig(providers={"openai": ProviderConfig(api_key="t")})
+    assert get_max_tokens(cfg, "openai") is None
+    assert get_max_tokens(cfg, "anthropic") is None
+
+
+def test_create_chat_model_cloudflare_passes_max_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ChatOpenAI instance built for cloudflare must carry the
+    completion-token cap (or whatever the user configured)."""
+    monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
+    cfg = AppConfig(
+        providers={
+            "cloudflare": ProviderConfig(api_key="cf-token", account_id="acct123"),
+        }
+    )
+    llm = create_chat_model("cloudflare", "@cf/openai/gpt-oss-120b", cfg)
+    cap = getattr(llm, "max_tokens", None)
+    assert cap == DEFAULT_MAX_TOKENS["cloudflare"]
+
+
+def test_create_chat_model_cloudflare_user_max_tokens_wins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
+    cfg = AppConfig(
+        providers={
+            "cloudflare": ProviderConfig(
+                api_key="cf-token",
+                account_id="acct123",
+                max_tokens=12000,
+            ),
+        }
+    )
+    llm = create_chat_model("cloudflare", "@cf/openai/gpt-oss-120b", cfg)
+    assert getattr(llm, "max_tokens", None) == 12000
+
+
+def test_render_config_toml_cloudflare_max_tokens_hint_when_unset() -> None:
+    """When the user hasn't set max_tokens we still surface the knob in
+    the rendered TOML so they can find it without reading the docs."""
+    cfg = AppConfig(
+        providers={
+            "cloudflare": ProviderConfig(api_key="t", account_id="a", model="@cf/x/y"),
+        }
+    )
+    text = render_config_toml(cfg)
+    assert "# max_tokens" in text
+
+
+def test_render_config_toml_cloudflare_emits_explicit_max_tokens() -> None:
+    cfg = AppConfig(
+        providers={
+            "cloudflare": ProviderConfig(
+                api_key="t",
+                account_id="a",
+                model="@cf/x/y",
+                max_tokens=8192,
+            ),
+        }
+    )
+    text = render_config_toml(cfg)
+    assert "max_tokens = 8192" in text

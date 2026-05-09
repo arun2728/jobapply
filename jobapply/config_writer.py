@@ -94,6 +94,15 @@ def _provider_block(name: str, pc: ProviderConfig) -> str:
     model = pc.model or default_model
     if model:
         lines.append(_kv("model", model))
+
+    if pc.max_tokens is not None:
+        lines.append(_kv("max_tokens", pc.max_tokens))
+    elif name == "cloudflare":
+        # Highlight the knob for cloudflare specifically because Workers
+        # AI defaults to a tiny 256-token cap; the bundled fallback
+        # (4096) keeps the structured-output agents working out of the
+        # box but users hitting truncation can bump it from here.
+        lines.append("# max_tokens = 4096  # bump if structured outputs get truncated\n")
     return "".join(lines)
 
 

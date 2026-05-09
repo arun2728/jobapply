@@ -4,10 +4,18 @@ from __future__ import annotations
 
 from typing import TypeVar
 
+from typing import Any
+
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel
 
-from jobapply.config import AppConfig, get_account_id, get_api_key, get_base_url
+from jobapply.config import (
+    AppConfig,
+    get_account_id,
+    get_api_key,
+    get_base_url,
+    get_max_tokens,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -62,9 +70,12 @@ def create_chat_model(
                 "jobapply.toml or OPENAI_API_KEY in env.",
             )
         base_url = get_base_url(cfg, "openai")
-        oai_kwargs: dict[str, str] = {"model": model, "api_key": key}
+        oai_kwargs: dict[str, Any] = {"model": model, "api_key": key}
         if base_url:
             oai_kwargs["base_url"] = base_url
+        max_tokens = get_max_tokens(cfg, "openai")
+        if max_tokens is not None:
+            oai_kwargs["max_tokens"] = max_tokens
         return ChatOpenAI(**oai_kwargs)
 
     if p == "ollama":
@@ -95,7 +106,20 @@ def create_chat_model(
                 "in jobapply.toml or CLOUDFLARE_ACCOUNT_ID in env. "
                 f"(account_id={account_id!r})",
             )
-        return ChatOpenAI(model=model, api_key=key, base_url=base_url)
+        cf_kwargs: dict[str, Any] = {
+            "model": model,
+            "api_key": key,
+            "base_url": base_url,
+        }
+        # Workers AI's compat endpoint defaults `max_tokens` to 256, which
+        # truncates structured-output JSON for the resume tailor / cover
+        # letter agents and surfaces as a `LengthFinishReasonError`. The
+        # config resolver returns DEFAULT_MAX_TOKENS["cloudflare"] (4096)
+        # unless the user picked a custom value.
+        max_tokens = get_max_tokens(cfg, "cloudflare")
+        if max_tokens is not None:
+            cf_kwargs["max_tokens"] = max_tokens
+        return ChatOpenAI(**cf_kwargs)
 
     raise ValueError(f"Unknown provider: {provider}")
 

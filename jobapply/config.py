@@ -54,6 +54,17 @@ CLOUDFLARE_GATEWAY_BASE_URL_TEMPLATE = (
 DEFAULT_LATEX_API_URL = "https://latex.ytotech.com/builds/sync"
 DEFAULT_LATEX_API_TIMEOUT = 120.0
 
+# Per-provider completion-token caps used when the user hasn't set one.
+# Cloudflare's OpenAI-compatible Workers AI endpoint defaults to a tiny 256-
+# token cap, which truncates the resume-tailor / cover-letter JSON mid-
+# payload and surfaces as a `LengthFinishReasonError`. We bump it to a
+# generous-but-safe value here so the bundled agents work out of the box.
+# Power users can override this by setting ``max_tokens`` in
+# ``[providers.cloudflare]`` (or any other provider that benefits).
+DEFAULT_MAX_TOKENS: dict[str, int] = {
+    "cloudflare": 4096,
+}
+
 
 class ProviderConfig(BaseModel):
     """Per-provider connection settings."""
@@ -77,6 +88,19 @@ class ProviderConfig(BaseModel):
             "``openai/gpt-5`` or ``anthropic/claude-...`` using BYOK keys "
             "configured in the gateway. Leave unset to talk to Workers AI "
             "directly (``@cf/...`` models only). Accepts ``env:VAR_NAME``."
+        ),
+    )
+    max_tokens: int | None = Field(
+        None,
+        ge=64,
+        description=(
+            "Optional cap on completion tokens per request. Critical for "
+            "OpenAI-compatible gateways (Cloudflare Workers AI, Together, "
+            "Groq, …) whose servers default to a low cap (256) that "
+            "truncates structured-output JSON mid-payload. Leave unset to "
+            "use the provider default; ``create_chat_model`` falls back to "
+            ":data:`DEFAULT_MAX_TOKENS` for cloudflare so the bundled "
+            "agents work out of the box."
         ),
     )
 
@@ -258,6 +282,23 @@ def cloudflare_gateway_base_url(account_id: str, gateway_id: str) -> str:
         account_id=account_id.strip(),
         gateway_id=gateway_id.strip(),
     )
+
+
+def get_max_tokens(cfg: AppConfig, provider: str) -> int | None:
+    """Resolve the per-provider completion-token cap.
+
+    Order: explicit ``[providers.<name>].max_tokens`` in ``jobapply.toml``
+    wins; otherwise we fall back to :data:`DEFAULT_MAX_TOKENS` for
+    providers that need a sane override (currently ``cloudflare``).
+    Returning ``None`` means "use the underlying SDK default", which is
+    the right call for OpenAI / Anthropic / Gemini whose own defaults are
+    already generous.
+    """
+    p = provider.lower().strip()
+    pc = cfg.provider_config(p)
+    if pc.max_tokens is not None:
+        return pc.max_tokens
+    return DEFAULT_MAX_TOKENS.get(p)
 
 
 def get_base_url(cfg: AppConfig, provider: str) -> str | None:

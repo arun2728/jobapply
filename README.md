@@ -194,9 +194,9 @@ Empty list / empty string fields are allowed; the CLI prints required-vs-recomme
 |----------|---------------|-------|
 | `gemini` | `api_key` (or `GOOGLE_API_KEY` / `GEMINI_API_KEY` env) | |
 | `anthropic` | `api_key` (or `ANTHROPIC_API_KEY` env) | optional `base_url` |
-| `openai` | `api_key` (or `OPENAI_API_KEY` env) | `base_url` for OpenAI-compatible gateways (Azure, Together, Groq, …) |
+| `openai` | `api_key` (or `OPENAI_API_KEY` env) | `base_url` for OpenAI-compatible gateways (Azure, Together, Groq, …); set `max_tokens` if your gateway truncates structured outputs |
 | `ollama` | none | local; configure `base_url` (default `http://127.0.0.1:11434`) |
-| `cloudflare` | `api_key` (Workers AI token, or `CLOUDFLARE_API_TOKEN` env) **and** `account_id` (or `CLOUDFLARE_ACCOUNT_ID` env) | Two routing modes — see below |
+| `cloudflare` | `api_key` (Workers AI token, or `CLOUDFLARE_API_TOKEN` env) **and** `account_id` (or `CLOUDFLARE_ACCOUNT_ID` env) | Two routing modes — see below. `max_tokens` defaults to 4096 to dodge Workers AI's tiny 256-token cap. |
 
 #### Cloudflare routing modes
 
@@ -208,6 +208,40 @@ Empty list / empty string fields are allowed; the CLI prints required-vs-recomme
 | AI Gateway Unified API (`gateway_id` **set**) | Calling third-party models via BYOK keys you've configured in the gateway's [Stored Keys](https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/) | `<provider>/<model>` — see the [Unified API docs](https://developers.cloudflare.com/ai-gateway/usage/chat-completion/) | `openai/gpt-5`, `anthropic/claude-3-5-sonnet`, `workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
 
 > If you hit `AiError: No such model: ... openai/gpt-5` on the direct endpoint, you're in mode 1 — either switch the model to a `@cf/...` id, or create an AI Gateway, store your OpenAI key under "Stored Keys", and set `gateway_id` to switch to mode 2.
+
+#### Avoiding Workers AI's 256-token truncation (`max_tokens`)
+
+Cloudflare's OpenAI-compatible Workers AI endpoint defaults `max_tokens` to **256** per request, which is small enough that a tailored resume's structured-output JSON gets truncated mid-payload and the OpenAI SDK raises:
+
+```text
+LengthFinishReasonError: Could not parse response content as the length limit
+was reached - CompletionUsage(completion_tokens=256, ...)
+```
+
+`jobapply` works around this by passing an explicit `max_tokens=4096` whenever the active provider is `cloudflare`, so the bundled resume-tailor / cover-letter / email-drafter agents Just Work. If your resume is unusually long (lots of skills + bullets) and you still see truncation, bump it in `jobapply.toml`:
+
+```toml
+[providers.cloudflare]
+api_key    = "env:CLOUDFLARE_API_TOKEN"
+account_id = "env:CLOUDFLARE_ACCOUNT_ID"
+model      = "@cf/openai/gpt-oss-120b"
+max_tokens = 8192   # default is 4096; raise if structured outputs get cut off
+```
+
+The same `max_tokens` field is available on every provider block — useful for OpenAI-compatible gateways (Together, Groq, Azure, …) that ship with similarly aggressive defaults. Native OpenAI / Anthropic / Gemini endpoints already have generous defaults, so leaving the field unset is the right call there.
+
+#### Picking a Cloudflare model
+
+Workers AI exposes ~80 models; only the ones marked **Function calling** (i.e. supporting structured/tool-call output) work with `jobapply`'s agents. Practical picks:
+
+| Use case | Model id | Notes |
+|----------|----------|-------|
+| Best default (this repo's default) | `@cf/openai/gpt-oss-120b` | OpenAI's 120B open-weight, "high reasoning, agentic tasks". Most reliable for the strict resume-tailor system prompt. |
+| Best price/performance | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | fp8-quantized 70B with function calling and JSON mode. Significantly cheaper/faster than the 120B tiers. |
+| Frontier alternative | `@cf/moonshotai/kimi-k2.6` | 1T params, 262K context, explicit "structured outputs" support. Use for top-quality cover letters / emails when cost isn't a concern. |
+| BYOK SOTA (gateway mode) | `openai/gpt-5` or `anthropic/claude-4.5-sonnet` | Set `gateway_id` and store your provider key in AI Gateway → BYOK. Best subjective quality for the email/cover-letter voice. |
+
+Avoid models flagged "Planned deprecation" (e.g. `@cf/meta/llama-3.1-70b-instruct`), code-tuned models like `qwen2.5-coder-32b-instruct` (wrong domain), and anything **without** a Function calling badge — `with_structured_output` will silently misbehave on those.
 
 `jobapply.toml` is gitignored by default. If you prefer env-only secrets, copy `.env.example` to `.env` and leave `api_key` lines commented out (or use `env:VAR_NAME`).
 
