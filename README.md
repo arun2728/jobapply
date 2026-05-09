@@ -353,9 +353,57 @@ After every run, `jobapply` writes `output/run-<id>/jobs.csv` with one row per j
 | `jobapply init` | Interactive setup: pick **one or more** providers, fill in connection details, and import your resume into a structured `profile.json`. **A resume is required**: pass `--resume <path>` (`.md` / `.txt` / `.docx` / `.pdf`, including LinkedIn PDF export) or `--paste` (read text from stdin / multiline prompt). The default provider's LLM extracts the resume into the [`Profile` schema](jobapply/profile.py) via structured output, so make sure that provider's key is reachable before running it. `--non-interactive` skips provider prompts but still requires `--resume` or `--paste`. |
 | `jobapply config` | Re-run the multi-provider prompts (add/remove providers, change credentials, or pick a new default); `--show` prints the resolved config |
 | `jobapply run` | Full pipeline (prompts unless `--yes`). Use `--provider` / `--model` to override the default LLM for this run — see [Switching providers per run](#switching-providers-per-run). |
+| `jobapply search` | **Lightweight cousin of `run`**: fetch jobs into `jobs.{json,csv}` without tailoring resumes. Add `--score` to also score each job against `profile.json`. See [Fetch-only search](#fetch-only-search). |
 | `jobapply tailor` | Tailor your resume + cover letter for **one** JD file (skip search). Accepts the same `--provider` / `--model` overrides as `run`. Optional `--with-email` drafts a ready-to-paste application email. See below. |
 | `jobapply resume <run-name>` | Continue from `meta.json` (default: reset checkpoint) |
 | `jobapply list` | List `output/run-*` folders |
+
+### Fetch-only search
+
+When you just want to triage the market — no resumes, no cover letters, no LLM credentials needed — `jobapply search` runs the same JobSpy fan-out as `jobapply run` and writes a Google-Sheets-friendly `jobs.csv` (plus `jobs.json` for tooling) without touching your profile.
+
+```bash
+# Pure fetch — no LLM credentials needed.
+jobapply search --titles "Backend Engineer,ML Engineer" --location "Remote" --yes
+
+# Same query, but also score each job against your profile.json.
+# --provider / --model are optional; defaults come from jobapply.toml.
+jobapply search \
+  --titles "Backend Engineer" \
+  --location "Remote" \
+  --score \
+  --provider openrouter \
+  --model openai/gpt-4o-mini \
+  --yes
+```
+
+Flags worth knowing:
+
+| Flag | Description |
+|------|-------------|
+| `--titles` / `-t` | Comma-separated job titles. Required. |
+| `--skills` / `-s` | Comma-separated skills. Boost the search query and (with `--score`) bias the fit-scorer toward what you care about. |
+| `--location` / `-l`, `--remote` | Same semantics as `jobapply run`. |
+| `--results` / `-n` | Override `results_wanted` from `jobapply.toml`. |
+| `--sites` | Comma-separated JobSpy sites (`indeed,linkedin,google,ziprecruiter,glassdoor`). Defaults to `sites` from the toml. |
+| `--score` | Run the LLM fit scorer against `profile.json` and write `fit_score`/`fit_rationale`/`missing_keywords` columns. Off by default. |
+| `--provider` / `--model` | Pick the LLM for scoring. Optional — defaults to the active provider in `jobapply.toml`. Only used with `--score`. |
+| `--profile` | Override `profile_path` from the toml. Only used with `--score`. |
+| `--output-dir` / `-o` | Override `output_dir`. Artifacts land in `<output_dir>/search-<timestamp>/`. |
+| `--yes` / `-y` | Skip the interactive title/skills/location/provider prompts. |
+
+Output layout:
+
+```text
+output/search-<timestamp>/
+├── jobs.json   # full JobsIndex (every fetched job + optional FitScore)
+├── jobs.csv    # Google-Sheets-friendly summary, sorted by descending fit
+└── meta.json   # search input snapshot + provider/model used
+```
+
+The CSV always carries `title`, `company`, `location`, `site`, `url`, `apply_url`, and `description` columns; with `--score` you also get `fit_score`, `fit_rationale`, and `missing_keywords`. Rows are sorted by descending fit score so the most promising matches surface at the top when you import into Google Sheets via **File → Import → Upload**. The CLI prints a "Top 5 matches" table inline too, so you can eyeball the best candidates without leaving the terminal.
+
+> Without `--score`, no LLM is called — `jobapply search` works without provider credentials or a `profile.json`. This is the right command to run when you just want to see what's out there.
 
 ### `jobapply tailor` — single-JD mode
 

@@ -1,4 +1,4 @@
-"""Typer CLI: init, config, run, resume, list."""
+"""Typer CLI: init, config, run, search, tailor, resume, list."""
 
 from __future__ import annotations
 
@@ -11,8 +11,17 @@ from pathlib import Path
 import questionary
 import typer
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.table import Table
 
+from jobapply.agents.fit_scorer import score_fit
+from jobapply.agents.search import search_jobs
 from jobapply.config import (
     DEFAULT_BASE_URLS,
     DEFAULT_MODELS,
@@ -29,8 +38,15 @@ from jobapply.config import (
 )
 from jobapply.config_writer import render_config_toml
 from jobapply.graph_nodes import bootstrap_resume_state
-from jobapply.models import JobSearchInput, LedgerStatus
-from jobapply.nodes.persist import write_jobs_csv_from_path
+from jobapply.models import (
+    FitScore,
+    JobRecord,
+    JobSearchInput,
+    JobsIndex,
+    LedgerStatus,
+    RawJob,
+)
+from jobapply.nodes.persist import write_jobs_csv, write_jobs_csv_from_path
 from jobapply.nodes.render import probe_md_pdf_backend, probe_tex_pdf_backend
 from jobapply.profile import (
     Profile,
@@ -60,7 +76,7 @@ from jobapply.tailor_one import (
 )
 from jobapply import __version__
 from jobapply.llm import create_chat_model
-from jobapply.utils import profile_hash as profile_hash_fn
+from jobapply.utils import atomic_write_json, profile_hash as profile_hash_fn
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
@@ -948,6 +964,309 @@ def _validate_keys(cfg: AppConfig, provider: str) -> None:
         )
     if p in {"openai", "ollama", "openrouter"}:
         get_base_url(cfg, p)
+
+
+def _record_from_raw_job(
+    job: RawJob,
+    *,
+    fit: FitScore | None = None,
+    error: str | None = None,
+) -> JobRecord:
+    """Wrap a :class:`RawJob` from the search agent into a :class:`JobRecord`.
+
+    The search-only flow doesn't run the tailor / cover-letter / render
+    nodes, so the resulting record is pure metadata + an optional
+    :class:`FitScore`. We mark it ``pending`` because that's what the
+    rest of the pipeline expects for "not yet processed by the tailor"
+    — and it keeps ``write_jobs_csv``'s sort logic predictable
+    (`pending` rows still sort by `-fit.score`, so scored jobs surface
+    highest-fit-first).
+    """
+    return JobRecord(
+        job_id=job.job_id,
+        title=job.title,
+        company=job.company,
+        location=job.location,
+        # Truncate to keep jobs.json + CSV manageable; the CSV truncates
+        # again to 1000 chars before writing the row anyway.
+        description=(job.description or "")[:5000],
+        job_url=job.job_url,
+        apply_url=job.apply_url,
+        site=job.site,
+        status=LedgerStatus.pending,
+        fit=fit,
+        error=error,
+        processed_at=datetime.now(UTC),
+    )
+
+
+def _print_top_matches(records: list[JobRecord], *, limit: int = 5) -> None:
+    """Render a small Rich table of the highest-scoring jobs.
+
+    Silently no-ops when nothing has a fit score — keeps the search
+    summary clean for the unscored flow.
+    """
+    scored = [r for r in records if r.fit is not None]
+    if not scored:
+        return
+    top = sorted(scored, key=lambda r: -(r.fit.score if r.fit else 0.0))[:limit]
+    table = Table(title=f"Top {len(top)} matches", show_header=True)
+    table.add_column("Score", justify="right", style="bold")
+    table.add_column("Title")
+    table.add_column("Company")
+    table.add_column("Location")
+    table.add_column("Link", overflow="fold")
+    for r in top:
+        score_text = f"{r.fit.score:.2f}" if r.fit else ""
+        link = r.apply_url or r.job_url or ""
+        table.add_row(score_text, r.title or "", r.company or "", r.location or "", link)
+    console.print(table)
+
+
+@app.command("search")
+def search_cmd(
+    titles: str | None = typer.Option(
+        None, "--titles", "-t", help="Comma-separated job titles."
+    ),
+    skills: str | None = typer.Option(
+        None,
+        "--skills",
+        "-s",
+        help=(
+            "Comma-separated skills. Boost the search query and (when --score "
+            "is set) bias the fit-scorer toward what you care about."
+        ),
+    ),
+    location: str | None = typer.Option(None, "--location", "-l"),
+    remote: bool = typer.Option(False, "--remote"),
+    results: int | None = typer.Option(
+        None,
+        "--results",
+        "-n",
+        help="Override jobapply.toml `results_wanted`.",
+    ),
+    sites: str | None = typer.Option(
+        None,
+        "--sites",
+        help=(
+            "Comma-separated JobSpy sites (indeed, linkedin, google, "
+            "ziprecruiter, glassdoor). Defaults to jobapply.toml `sites`."
+        ),
+    ),
+    score: bool = typer.Option(
+        False,
+        "--score",
+        help=(
+            "Score each fetched job against profile.json. Requires the "
+            "active provider's credentials and a populated profile."
+        ),
+    ),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help=(
+            "Pick one of the providers configured in jobapply.toml "
+            "(gemini | anthropic | openai | ollama | cloudflare | openrouter). "
+            "Only used with --score."
+        ),
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help=(
+            "Override the model id for scoring. Defaults to the chosen "
+            "provider's `[providers.<name>].model` value. Only used with --score."
+        ),
+    ),
+    profile_path: str | None = typer.Option(
+        None,
+        "--profile",
+        help=(
+            "Override jobapply.toml `profile_path` (must be a profile.json "
+            "file). Only used with --score."
+        ),
+    ),
+    output_dir: str | None = typer.Option(
+        None,
+        "--output-dir",
+        "-o",
+        help="Override jobapply.toml `output_dir`. Artifacts land in <output>/search-<ts>/.",
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Non-interactive defaults (skip prompts)."
+    ),
+) -> None:
+    """Fetch jobs (and optionally score them) into a CSV — no resume tailoring.
+
+    The lightweight cousin of ``jobapply run``: fans out to every
+    configured site via JobSpy, dedupes, and writes
+    ``output/search-<ts>/jobs.{json,csv}``. Pass ``--score`` to also run
+    the LLM fit scorer over each job — that's the only branch that
+    needs your provider credentials and ``profile.json``. Use
+    ``--provider``/``--model`` to override the active LLM for this
+    invocation.
+    """
+    load_dotenv_if_present()
+    root = Path.cwd()
+    cfg = load_config(root)
+
+    if not yes:
+        titles = titles or questionary.text("Job titles (comma-separated)").ask()
+        skills = skills or questionary.text(
+            "Primary skills (comma-separated)", default=""
+        ).ask()
+        if location is None:
+            location = questionary.text("Location (or blank)", default="").ask()
+    if not titles:
+        console.print("[red]titles required[/red]")
+        raise typer.Exit(1)
+
+    title_list = [x.strip() for x in titles.split(",") if x.strip()]
+    skill_list = [x.strip() for x in (skills or "").split(",") if x.strip()]
+    site_list = (
+        [x.strip() for x in sites.split(",") if x.strip()] if sites else cfg.sites
+    )
+    effective_results = results if results is not None else cfg.results_wanted
+    effective_output = output_dir or cfg.output_dir
+
+    profile_text = ""
+    profile_path_str = ""
+    prov = ""
+    mdl = ""
+    if score:
+        prov, mdl = _resolve_provider_and_model(
+            cfg, provider=provider, model=model, yes=yes
+        )
+        _validate_keys(cfg, prov)
+        effective_profile = profile_path or cfg.profile_path
+        prof = Path(effective_profile)
+        if not prof.is_absolute():
+            prof = root / prof
+        try:
+            profile = load_profile(prof)
+        except ProfileLoadError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
+        profile_text = profile_to_text(profile)
+        profile_path_str = str(prof.resolve())
+        _report_profile_issues(
+            validate_profile(profile),
+            profile_path=prof,
+            context="before this search",
+        )
+    elif provider or model or profile_path:
+        # Be loud about the no-op so users don't think their flag took
+        # effect when it actually didn't.
+        console.print(
+            "[yellow]--provider / --model / --profile are ignored without "
+            "--score.[/yellow]"
+        )
+
+    run_id = f"search-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}"
+    run_dir = root / effective_output / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    search_input = JobSearchInput(
+        titles=title_list,
+        skills=skill_list,
+        location=location or None,
+        remote=remote,
+        results_wanted=effective_results,
+        hours_old=cfg.hours_old,
+        site_names=site_list,
+    )
+
+    score_summary = (
+        f"  provider={prov}  model={mdl}" if score else "  [dim](no scoring)[/dim]"
+    )
+    console.print(
+        f"[bold]Search[/bold] {run_id} → {run_dir}\n"
+        f"[dim]results_wanted={effective_results}  sites={','.join(site_list)}"
+        f"  score={score}[/dim]{score_summary}"
+    )
+
+    with console.status("[dim]Searching job boards…[/dim]"):
+        jobs = search_jobs(search_input)
+    console.print(f"[green]Fetched[/green] {len(jobs)} jobs")
+
+    records: list[JobRecord] = []
+    if score and jobs:
+        try:
+            llm = create_chat_model(prov, mdl, cfg=cfg)
+        except RuntimeError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task("Scoring jobs", total=len(jobs))
+            for j in jobs:
+                fit: FitScore | None = None
+                err: str | None = None
+                try:
+                    fit = score_fit(
+                        llm,
+                        profile_text=profile_text,
+                        job=j,
+                        skills=skill_list,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    # One bad job description shouldn't kill the whole
+                    # batch; record the failure and keep going.
+                    err = f"score failed: {exc}"
+                records.append(_record_from_raw_job(j, fit=fit, error=err))
+                desc_label = (j.title or j.company or j.job_id)[:48]
+                progress.update(task, advance=1, description=f"Scoring {desc_label}")
+    else:
+        records = [_record_from_raw_job(j) for j in jobs]
+
+    idx = JobsIndex(
+        run_id=run_id,
+        search=search_input,
+        profile_path=profile_path_str,
+        provider=prov,
+        model=mdl,
+        jobs=records,
+    )
+    jobs_path = run_dir / "jobs.json"
+    atomic_write_json(jobs_path, idx.model_dump(mode="json"))
+    csv_path = write_jobs_csv(run_dir, idx)
+    meta_path = run_dir / "meta.json"
+    atomic_write_json(
+        meta_path,
+        {
+            "run_id": run_id,
+            "search_input": search_input.model_dump(mode="json"),
+            "scored": score,
+            "provider": prov,
+            "model": mdl,
+            "profile_path": profile_path_str,
+            "fetched": len(records),
+        },
+    )
+
+    console.print(
+        f"[green]Wrote[/green] {jobs_path}\n"
+        f"[green]Wrote[/green] {csv_path} "
+        "[dim](import into Google Sheets via File → Import)[/dim]"
+    )
+
+    if score:
+        scored_ok = sum(1 for r in records if r.fit is not None)
+        scored_failed = sum(1 for r in records if r.error)
+        console.print(
+            f"[dim]Scored {scored_ok}/{len(records)} jobs"
+            + (f" ({scored_failed} failed)" if scored_failed else "")
+            + ".[/dim]"
+        )
+        _print_top_matches(records)
+    console.print("[green]Finished search.[/green]")
 
 
 @app.command()
