@@ -21,7 +21,7 @@ from rich.progress import (
 from rich.table import Table
 
 from jobapply.agents.fit_scorer import score_fit
-from jobapply.agents.search import search_jobs
+from jobapply.agents.search import iter_search_jobs
 from jobapply.config import (
     DEFAULT_BASE_URLS,
     DEFAULT_MODELS,
@@ -1000,6 +1000,19 @@ def _record_from_raw_job(
     )
 
 
+def _flush_search_state(run_dir: Path, idx: JobsIndex) -> None:
+    """Atomically rewrite ``jobs.json`` + ``jobs.csv`` for the current index.
+
+    Called after every fetched/scored job so users get incremental
+    visibility — open the CSV mid-run and you'll see the latest hits
+    sorted by descending fit score (when scoring is enabled). Writes
+    are tiny (a few hundred KB at the worst) so doing this per-job is
+    cheap relative to a single LLM call.
+    """
+    atomic_write_json(run_dir / "jobs.json", idx.model_dump(mode="json"))
+    write_jobs_csv(run_dir, idx)
+
+
 def _print_top_matches(records: list[JobRecord], *, limit: int = 5) -> None:
     """Render a small Rich table of the highest-scoring jobs.
 
@@ -1185,12 +1198,61 @@ def search_cmd(
         f"  score={score}[/dim]{score_summary}"
     )
 
-    with console.status("[dim]Searching job boards…[/dim]"):
-        jobs = search_jobs(search_input)
-    console.print(f"[green]Fetched[/green] {len(jobs)} jobs")
+    # Build an empty index up-front and seed the on-disk artifacts so
+    # users can `tail`/refresh the CSV the moment the first job lands.
+    idx = JobsIndex(
+        run_id=run_id,
+        search=search_input,
+        profile_path=profile_path_str,
+        provider=prov,
+        model=mdl,
+        jobs=[],
+    )
+    jobs_path = run_dir / "jobs.json"
+    csv_path = run_dir / "jobs.csv"
+    meta_path = run_dir / "meta.json"
 
-    records: list[JobRecord] = []
-    if score and jobs:
+    def _write_meta(*, fetched: int) -> None:
+        # meta.json is informational; rewriting it on each flush gives
+        # users a quick glance at progress (`fetched` ticks up live).
+        atomic_write_json(
+            meta_path,
+            {
+                "run_id": run_id,
+                "search_input": search_input.model_dump(mode="json"),
+                "scored": score,
+                "provider": prov,
+                "model": mdl,
+                "profile_path": profile_path_str,
+                "fetched": fetched,
+            },
+        )
+
+    _flush_search_state(run_dir, idx)
+    _write_meta(fetched=0)
+    console.print(
+        f"[dim]Streaming results to[/dim] {jobs_path} "
+        f"[dim]and[/dim] {csv_path}"
+    )
+
+    records: list[JobRecord] = idx.jobs  # alias the live list
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TextColumn("[bold]{task.completed}[/bold] jobs"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
+        task = progress.add_task("Searching job boards", total=None)
+        for j in iter_search_jobs(search_input):
+            records.append(_record_from_raw_job(j))
+            _flush_search_state(run_dir, idx)
+            _write_meta(fetched=len(records))
+            progress.update(task, advance=1)
+    console.print(f"[green]Fetched[/green] {len(records)} jobs")
+
+    if score and records:
         try:
             llm = create_chat_model(prov, mdl, cfg=cfg)
         except RuntimeError as exc:
@@ -1205,51 +1267,39 @@ def search_cmd(
             console=console,
             transient=False,
         ) as progress:
-            task = progress.add_task("Scoring jobs", total=len(jobs))
-            for j in jobs:
+            task = progress.add_task("Scoring jobs", total=len(records))
+            for i, raw_record in enumerate(list(records)):
+                # Re-build the RawJob handle from the persisted record so
+                # the scorer sees the same fields callers do. We pull the
+                # full description from the source list (already truncated
+                # to 5000 chars by `_record_from_raw_job`).
+                job = RawJob(
+                    job_id=raw_record.job_id,
+                    title=raw_record.title,
+                    company=raw_record.company,
+                    location=raw_record.location,
+                    description=raw_record.description,
+                    job_url=raw_record.job_url,
+                    apply_url=raw_record.apply_url,
+                    site=raw_record.site,
+                )
                 fit: FitScore | None = None
                 err: str | None = None
                 try:
                     fit = score_fit(
                         llm,
                         profile_text=profile_text,
-                        job=j,
+                        job=job,
                         skills=skill_list,
                     )
                 except Exception as exc:  # noqa: BLE001
-                    # One bad job description shouldn't kill the whole
-                    # batch; record the failure and keep going.
+                    # One bad job shouldn't kill the whole batch; record
+                    # the failure on this row and keep going.
                     err = f"score failed: {exc}"
-                records.append(_record_from_raw_job(j, fit=fit, error=err))
-                desc_label = (j.title or j.company or j.job_id)[:48]
+                records[i] = _record_from_raw_job(job, fit=fit, error=err)
+                _flush_search_state(run_dir, idx)
+                desc_label = (job.title or job.company or job.job_id)[:48]
                 progress.update(task, advance=1, description=f"Scoring {desc_label}")
-    else:
-        records = [_record_from_raw_job(j) for j in jobs]
-
-    idx = JobsIndex(
-        run_id=run_id,
-        search=search_input,
-        profile_path=profile_path_str,
-        provider=prov,
-        model=mdl,
-        jobs=records,
-    )
-    jobs_path = run_dir / "jobs.json"
-    atomic_write_json(jobs_path, idx.model_dump(mode="json"))
-    csv_path = write_jobs_csv(run_dir, idx)
-    meta_path = run_dir / "meta.json"
-    atomic_write_json(
-        meta_path,
-        {
-            "run_id": run_id,
-            "search_input": search_input.model_dump(mode="json"),
-            "scored": score,
-            "provider": prov,
-            "model": mdl,
-            "profile_path": profile_path_str,
-            "fetched": len(records),
-        },
-    )
 
     console.print(
         f"[green]Wrote[/green] {jobs_path}\n"

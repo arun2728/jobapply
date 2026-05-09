@@ -124,7 +124,7 @@ def test_search_fetch_only_writes_jobs_json_and_csv(
     _write_minimal_toml(tmp_path / "jobapply.toml")
 
     fetched = [_raw("a1"), _raw("b2", title="Senior MLE", company="Globex")]
-    monkeypatch.setattr(cli_module, "search_jobs", lambda inp: fetched)
+    monkeypatch.setattr(cli_module, "iter_search_jobs", lambda inp: iter(fetched))
 
     # If scoring leaks into the fetch-only path, fail loudly.
     def _no_score(*_a: Any, **_kw: Any) -> FitScore:
@@ -174,7 +174,7 @@ def test_search_no_jobs_still_writes_empty_csv(
     monkeypatch.chdir(tmp_path)
     _write_minimal_toml(tmp_path / "jobapply.toml")
 
-    monkeypatch.setattr(cli_module, "search_jobs", lambda inp: [])
+    monkeypatch.setattr(cli_module, "iter_search_jobs", lambda inp: iter([]))
     result = CliRunner().invoke(
         app, ["search", "--titles", "Nonexistent Role", "--yes"]
     )
@@ -192,7 +192,7 @@ def test_search_warns_when_provider_passed_without_score(
     """Bare --provider/--model without --score is a no-op — surface that."""
     monkeypatch.chdir(tmp_path)
     _write_minimal_toml(tmp_path / "jobapply.toml")
-    monkeypatch.setattr(cli_module, "search_jobs", lambda inp: [_raw("a1")])
+    monkeypatch.setattr(cli_module, "iter_search_jobs", lambda inp: iter([_raw("a1")]))
 
     result = CliRunner().invoke(
         app,
@@ -219,7 +219,7 @@ def test_search_with_score_attaches_fit_and_skips_failures(
     _write_minimal_profile(tmp_path / "profile.json")
 
     jobs = [_raw("a1"), _raw("b2"), _raw("c3", title="Lead MLE")]
-    monkeypatch.setattr(cli_module, "search_jobs", lambda inp: jobs)
+    monkeypatch.setattr(cli_module, "iter_search_jobs", lambda inp: iter(jobs))
 
     # Stub create_chat_model so we never touch the network. The scorer
     # only cares that the object isn't None — `score_fit` is stubbed
@@ -270,7 +270,7 @@ def test_search_with_score_requires_profile(
     monkeypatch.chdir(tmp_path)
     _write_minimal_toml(tmp_path / "jobapply.toml")
     # NO profile.json on disk.
-    monkeypatch.setattr(cli_module, "search_jobs", lambda inp: [_raw("a1")])
+    monkeypatch.setattr(cli_module, "iter_search_jobs", lambda inp: iter([_raw("a1")]))
     monkeypatch.setattr(cli_module, "create_chat_model", lambda *a, **kw: object())
     monkeypatch.setattr(cli_module, "score_fit", lambda *a, **kw: FitScore(score=0.5))
 
@@ -283,6 +283,87 @@ def test_search_with_score_requires_profile(
     assert not list((tmp_path / "output").glob("search-*/jobs.csv"))
 
 
+def test_search_persists_jobs_incrementally_during_fetch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fetch loop should flush ``jobs.json`` after every yielded job,
+    so users can `tail` the file mid-search instead of waiting for the
+    full batch. We assert this by inspecting jobs.json from inside the
+    generator: by the time the second job is about to be yielded, the
+    first one must already be on disk."""
+    monkeypatch.chdir(tmp_path)
+    _write_minimal_toml(tmp_path / "jobapply.toml")
+
+    captured_sizes: list[int] = []
+
+    def _streaming_search(_inp: Any) -> Any:
+        # Yield job 1, then peek at jobs.json before yielding job 2.
+        yield _raw("a1")
+        # The CLI should have flushed `a1` to disk by now.
+        search_dir = next((tmp_path / "output").glob("search-*"))
+        on_disk = json.loads((search_dir / "jobs.json").read_text(encoding="utf-8"))
+        captured_sizes.append(len(on_disk["jobs"]))
+        yield _raw("b2")
+        on_disk = json.loads((search_dir / "jobs.json").read_text(encoding="utf-8"))
+        captured_sizes.append(len(on_disk["jobs"]))
+        yield _raw("c3")
+
+    monkeypatch.setattr(cli_module, "iter_search_jobs", _streaming_search)
+
+    result = CliRunner().invoke(app, ["search", "--titles", "X", "--yes"])
+    assert result.exit_code == 0, result.output
+
+    # First peek (after yielding a1, before yielding b2) → 1 job persisted.
+    # Second peek (after yielding b2, before yielding c3) → 2 jobs persisted.
+    assert captured_sizes == [1, 2]
+
+    # And the final state contains all three.
+    final = json.loads(
+        next((tmp_path / "output").glob("search-*/jobs.json")).read_text()
+    )
+    assert {j["job_id"] for j in final["jobs"]} == {"a1", "b2", "c3"}
+
+
+def test_search_persists_score_results_incrementally(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same guarantee for the scoring loop: each ``score_fit`` result
+    should land on disk before the next job is scored, so users can
+    watch fit scores populate the CSV row-by-row.
+    """
+    monkeypatch.chdir(tmp_path)
+    _write_minimal_toml(tmp_path / "jobapply.toml")
+    _write_minimal_profile(tmp_path / "profile.json")
+
+    jobs = [_raw("a1"), _raw("b2"), _raw("c3")]
+    monkeypatch.setattr(cli_module, "iter_search_jobs", lambda inp: iter(jobs))
+    monkeypatch.setattr(cli_module, "create_chat_model", lambda *a, **kw: object())
+
+    scores_seen_per_call: list[int] = []
+
+    def _fake_score(_llm: Any, *, profile_text: str, job: Any, skills: Any) -> FitScore:
+        # Inspect jobs.json *before* this score lands; we should see
+        # the records from previous score calls already persisted.
+        search_dir = next((tmp_path / "output").glob("search-*"))
+        on_disk = json.loads((search_dir / "jobs.json").read_text(encoding="utf-8"))
+        scored_so_far = sum(1 for r in on_disk["jobs"] if r.get("fit") is not None)
+        scores_seen_per_call.append(scored_so_far)
+        return FitScore(score=0.5, rationale="ok")
+
+    monkeypatch.setattr(cli_module, "score_fit", _fake_score)
+
+    result = CliRunner().invoke(
+        app, ["search", "--titles", "X", "--score", "--yes"]
+    )
+    assert result.exit_code == 0, result.output
+
+    # Call 0 sees 0 fits on disk, call 1 sees 1, call 2 sees 2 — proving
+    # the CLI persisted each score before invoking the next one.
+    assert scores_seen_per_call == [0, 1, 2]
+
+
 def test_search_uses_explicit_provider_and_model_overrides(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -292,7 +373,7 @@ def test_search_uses_explicit_provider_and_model_overrides(
     monkeypatch.chdir(tmp_path)
     _write_minimal_toml(tmp_path / "jobapply.toml", provider="openai")
     _write_minimal_profile(tmp_path / "profile.json")
-    monkeypatch.setattr(cli_module, "search_jobs", lambda inp: [_raw("a1")])
+    monkeypatch.setattr(cli_module, "iter_search_jobs", lambda inp: iter([_raw("a1")]))
 
     captured: dict[str, Any] = {}
 

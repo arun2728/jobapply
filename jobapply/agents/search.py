@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any, cast
 
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -44,12 +45,20 @@ def _scrape_once(
     return cast(list[dict[str, Any]], list(raw))
 
 
-def search_jobs(inp: JobSearchInput) -> list[RawJob]:
-    """Run JobSpy for each title; merge and dedupe by stable job_id."""
+def iter_search_jobs(inp: JobSearchInput) -> Iterator[RawJob]:
+    """Stream JobSpy hits as they arrive, deduped by stable job_id.
+
+    Yields one :class:`RawJob` at a time in title-major order so callers
+    can persist results incrementally (e.g. ``jobapply search`` flushes
+    ``jobs.json``/``jobs.csv`` after each yielded job for live feedback
+    instead of waiting for the whole batch to finish). The generator
+    stops as soon as ``inp.results_wanted`` unique jobs have been
+    yielded.
+    """
     site_name = inp.site_names or ["indeed", "linkedin", "google"]
     skills_q = " ".join(inp.skills) if inp.skills else ""
     seen: set[str] = set()
-    out: list[RawJob] = []
+    yielded = 0
     per_title = max(5, min(inp.results_wanted, 200 // max(1, len(inp.titles))))
 
     for title in inp.titles:
@@ -81,20 +90,28 @@ def search_jobs(inp: JobSearchInput) -> list[RawJob]:
             if jid in seen:
                 continue
             seen.add(jid)
-            out.append(
-                RawJob(
-                    job_id=jid,
-                    title=title_s,
-                    company=company,
-                    location=location_s,
-                    description=str(d.get("description") or ""),
-                    job_url=str(job_url) if job_url else None,
-                    apply_url=str(apply_url) if apply_url else None,
-                    site=site,
-                    date_posted=str(d.get("date")) if d.get("date") else None,
-                    raw=d,
-                )
+            yield RawJob(
+                job_id=jid,
+                title=title_s,
+                company=company,
+                location=location_s,
+                description=str(d.get("description") or ""),
+                job_url=str(job_url) if job_url else None,
+                apply_url=str(apply_url) if apply_url else None,
+                site=site,
+                date_posted=str(d.get("date")) if d.get("date") else None,
+                raw=d,
             )
-        if len(out) >= inp.results_wanted:
-            break
-    return out[: inp.results_wanted]
+            yielded += 1
+            if yielded >= inp.results_wanted:
+                return
+
+
+def search_jobs(inp: JobSearchInput) -> list[RawJob]:
+    """Run JobSpy for each title; merge and dedupe by stable job_id.
+
+    Thin wrapper around :func:`iter_search_jobs` that materializes the
+    full list upfront. Use the generator directly when you want to
+    react to results as they arrive.
+    """
+    return list(iter_search_jobs(inp))
