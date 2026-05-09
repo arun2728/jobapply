@@ -52,12 +52,40 @@ from jobapply.profile_validation import (
     validate_profile_path,
 )
 from jobapply.runner import run_pipeline
+from jobapply.tailor_one import (
+    JD_SUPPORTED_SUFFIXES,
+    JobDescriptionReadError,
+    TailorEmailRequest,
+    tailor_for_job_description,
+)
+from jobapply import __version__
+from jobapply.llm import create_chat_model
 from jobapply.utils import profile_hash as profile_hash_fn
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
 
 DEFAULT_PROFILE_FILENAME = "profile.json"
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"jobapply {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the jobapply version and exit.",
+    ),
+) -> None:
+    """JobApply — search every job board and tailor your resume with AI."""
 
 
 def _ledger_db_path(cfg: AppConfig, cwd: Path | None = None) -> Path:
@@ -841,6 +869,270 @@ def resume(
     n_searched = len(final_state.get("jobs_raw") or [])
     _print_run_summary(run_dir, n_searched)
     console.print("[green]Finished resume.[/green]")
+
+
+def _validate_jd_path(raw: str) -> Path | None:
+    """Parse a JD path argument the way ``_validate_resume_path`` does.
+
+    Strips quotes, expands ``~``, resolves the absolute path, and
+    rejects unreadable / wrong-extension files with a friendly message
+    so the CLI doesn't drop a stack trace on the user.
+    """
+    text = raw.strip().strip('"').strip("'")
+    if not text:
+        return None
+    expanded = Path(text).expanduser().resolve()
+    if not expanded.is_file():
+        console.print(f"[red]Not a file:[/red] {expanded}")
+        return None
+    if expanded.suffix.lower() not in JD_SUPPORTED_SUFFIXES:
+        console.print(
+            f"[red]Unsupported job description format[/red] '{expanded.suffix}'. "
+            f"Use one of: {', '.join(JD_SUPPORTED_SUFFIXES)}.",
+        )
+        return None
+    return expanded
+
+
+def _print_tailor_summary(
+    *,
+    job_dir: Path,
+    artifacts: dict[str, Path | None],
+    email_to: str | None,
+) -> None:
+    """Pretty-print the artifacts produced by ``jobapply tailor``."""
+    table = Table(title=f"Tailored artifacts → {job_dir}", show_header=True)
+    table.add_column("Artifact", style="bold")
+    table.add_column("Path")
+    rows: list[tuple[str, Path | None]] = [
+        ("resume.md", artifacts.get("resume_md")),
+        ("resume.pdf", artifacts.get("resume_pdf")),
+        ("resume.tex", artifacts.get("resume_tex")),
+        ("resume (LaTeX PDF)", artifacts.get("resume_latex_pdf")),
+        ("cover_letter.md", artifacts.get("cover_md")),
+        ("cover_letter.pdf", artifacts.get("cover_pdf")),
+        ("cover_letter.tex", artifacts.get("cover_tex")),
+        ("cover_letter (LaTeX PDF)", artifacts.get("cover_latex_pdf")),
+        ("email.txt", artifacts.get("email_path")),
+    ]
+    for label, path in rows:
+        if path is not None:
+            table.add_row(label, str(path))
+    console.print(table)
+    if email_to:
+        console.print(
+            f"[dim]Email drafted for {email_to} — copy "
+            f"{artifacts.get('email_path')} into your mail client.[/dim]"
+        )
+
+
+@app.command()
+def tailor(
+    job_description: str | None = typer.Option(
+        None,
+        "--job",
+        "-j",
+        help=(
+            "Path to the job description "
+            f"({', '.join(JD_SUPPORTED_SUFFIXES)}). The configured LLM tailors "
+            "your resume + cover letter to it."
+        ),
+    ),
+    profile_path: str | None = typer.Option(
+        None,
+        "--profile",
+        help="Override jobapply.toml `profile_path` (must point at profile.json).",
+    ),
+    output_dir: str | None = typer.Option(
+        None,
+        "--output-dir",
+        "-o",
+        help="Override jobapply.toml `output_dir`. Artifacts land in <output>/tailor-<ts>/.",
+    ),
+    title_override: str | None = typer.Option(
+        None,
+        "--title",
+        help="Skip JD title detection and force this title (slug + agents use it).",
+    ),
+    company_override: str | None = typer.Option(
+        None,
+        "--company",
+        help="Skip JD company detection and force this company.",
+    ),
+    location_override: str | None = typer.Option(
+        None,
+        "--location",
+        "-l",
+        help="Optional location override (purely informational).",
+    ),
+    skills: str | None = typer.Option(
+        None,
+        "--skills",
+        "-s",
+        help="Comma-separated skills to bias the tailor towards (in addition to the JD).",
+    ),
+    provider: str | None = typer.Option(None, "--provider"),
+    model: str | None = typer.Option(None, "--model"),
+    no_pdf: bool = typer.Option(False, "--no-pdf", help="Skip PDF rendering."),
+    with_email: bool = typer.Option(
+        False,
+        "--with-email",
+        help="Also draft a ready-to-paste application email (requires --email-to or prompt).",
+    ),
+    email_to: str | None = typer.Option(
+        None,
+        "--email-to",
+        help="Recipient email address for the drafted application email.",
+    ),
+    email_context: str | None = typer.Option(
+        None,
+        "--email-context",
+        help=(
+            "Optional extra context for the drafted email "
+            "(e.g. referrals, availability, prior contact)."
+        ),
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Non-interactive defaults."),
+) -> None:
+    """Tailor your resume + cover letter for a single job description.
+
+    Pass a JD file with ``--job <path>`` and the configured LLM produces a
+    tailored ``resume.md`` / ``resume.pdf`` (plus a styled LaTeX PDF) and
+    matching ``cover_letter.*`` files under ``<output_dir>/tailor-<ts>/``.
+
+    Add ``--with-email`` to also produce a ready-to-paste application
+    email — the recipient address is required (``--email-to`` or
+    interactive prompt). ``--email-context`` lets you weave in
+    referrals, availability, or any prior contact you've had with the
+    recruiter so the draft sounds personal rather than generic.
+    """
+    load_dotenv_if_present()
+    root = Path.cwd()
+    cfg = load_config(root)
+    apply_latex_api_env(cfg)
+
+    if not job_description and not yes:
+        job_description = questionary.text(
+            "Path to the job description "
+            f"({'/'.join(JD_SUPPORTED_SUFFIXES)})",
+            default="",
+        ).ask()
+    if not job_description:
+        console.print(
+            "[red]A job description path is required.[/red] "
+            "Pass --job <path> or rerun without --yes for the prompt.",
+        )
+        raise typer.Exit(1)
+    jd_path = _validate_jd_path(job_description)
+    if jd_path is None:
+        raise typer.Exit(1)
+
+    if with_email and not email_to and not yes:
+        email_to = questionary.text(
+            "Recipient email address for the application email",
+            default="",
+        ).ask()
+    if with_email and not (email_to or "").strip():
+        console.print(
+            "[red]--with-email requires --email-to[/red] "
+            "(or rerun without --yes so we can prompt for it).",
+        )
+        raise typer.Exit(1)
+    if with_email and email_context is None and not yes:
+        ctx_answer = questionary.text(
+            "Any extra context for the email? (referrals, availability, etc.; blank to skip)",
+            default="",
+        ).ask()
+        email_context = ctx_answer if ctx_answer is not None else ""
+
+    prov = (provider or cfg.provider).lower().strip()
+    mdl = model or cfg.resolved_model(prov)
+    if not mdl:
+        console.print(f"[red]No model configured for provider {prov}.[/red]")
+        raise typer.Exit(1)
+    _validate_keys(cfg, prov)
+
+    effective_profile = profile_path or cfg.profile_path
+    effective_output = output_dir or cfg.output_dir
+    prof = Path(effective_profile)
+    if not prof.is_absolute():
+        prof = root / prof
+    try:
+        profile = load_profile(prof)
+    except ProfileLoadError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    profile_text = profile_to_text(profile)
+    canonical_skills = profile_skill_list(profile)
+    _report_profile_issues(
+        validate_profile(profile),
+        profile_path=prof,
+        context="before this tailor run",
+    )
+
+    skill_list = [x.strip() for x in (skills or "").split(",") if x.strip()]
+    output_root = root / effective_output / f"tailor-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}"
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    backend = probe_md_pdf_backend() or "none"
+    tex_backend = probe_tex_pdf_backend() or "none"
+    console.print(
+        f"[bold]Tailor[/bold] {jd_path.name} → {output_root}\n"
+        f"[dim]profile={prof}  provider={prov}  model={mdl}[/dim]\n"
+        f"[dim]Markdown PDF backend:[/dim] {backend}  "
+        f"[dim]LaTeX PDF backend:[/dim] {tex_backend}",
+    )
+
+    try:
+        llm = create_chat_model(prov, mdl, cfg=cfg)
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    email_request: TailorEmailRequest | None = None
+    if with_email:
+        email_request = TailorEmailRequest(
+            recipient=(email_to or "").strip(),
+            additional_info=(email_context or "").strip(),
+        )
+
+    try:
+        outputs = tailor_for_job_description(
+            llm,
+            jd_path=jd_path,
+            profile_text=profile_text,
+            profile_skills=canonical_skills,
+            output_root=output_root,
+            target_skills=skill_list,
+            title_override=title_override,
+            company_override=company_override,
+            location_override=location_override,
+            no_pdf=no_pdf,
+            email=email_request,
+        )
+    except JobDescriptionReadError as exc:
+        console.print(f"[red]Job description error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    artifacts: dict[str, Path | None] = {
+        "resume_md": outputs.resume_md,
+        "resume_pdf": outputs.resume_pdf,
+        "resume_tex": outputs.resume_tex,
+        "resume_latex_pdf": outputs.resume_latex_pdf,
+        "cover_md": outputs.cover_md,
+        "cover_pdf": outputs.cover_pdf,
+        "cover_tex": outputs.cover_tex,
+        "cover_latex_pdf": outputs.cover_latex_pdf,
+        "email_path": outputs.email_path,
+    }
+    _print_tailor_summary(
+        job_dir=outputs.job_dir,
+        artifacts=artifacts,
+        email_to=outputs.email.to if outputs.email else None,
+    )
+    console.print(
+        f"[green]Tailored[/green] '{outputs.job.title}' at {outputs.job.company}."
+    )
 
 
 def main() -> None:

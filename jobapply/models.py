@@ -153,6 +153,51 @@ class OutreachMessages(BaseModel):
     cold_email: str = ""
 
 
+class JobDescriptionMeta(BaseModel):
+    """Metadata an LLM extracts from a raw job-description blob.
+
+    Used by the ``jobapply tailor`` flow when the user only hands us a JD
+    file: we still need a job title and company name to seed the resume /
+    cover-letter agents and to generate the output slug.
+    """
+
+    title: str = Field("", description="Job title (e.g. 'Senior Backend Engineer').")
+    company: str = Field("", description="Hiring company name.")
+    location: str = Field("", description="Office / remote location, if mentioned.")
+
+
+class EmailDraft(BaseModel):
+    """A ready-to-paste application email produced by the email drafter agent.
+
+    ``subject`` and ``body`` are split so the CLI can render them separately
+    (and so callers can drop them straight into a mail client). ``to`` echoes
+    the recipient address the user supplied — keeping it on the model lets
+    persisted artifacts (`email.txt`) be self-contained.
+    """
+
+    to: str = Field("", description="Recipient email address (echoed from the user input).")
+    subject: str = Field(..., description="Concise, specific email subject line.")
+    body: str = Field(..., description="Plain-text email body, ready to paste.")
+
+    def as_text(self) -> str:
+        """Render the draft as a plain-text email block.
+
+        Format::
+
+            To: <to>
+            Subject: <subject>
+
+            <body>
+        """
+        lines: list[str] = []
+        if self.to.strip():
+            lines.append(f"To: {self.to.strip()}")
+        lines.append(f"Subject: {self.subject.strip()}")
+        lines.append("")
+        lines.append(self.body.strip())
+        return "\n".join(lines).rstrip() + "\n"
+
+
 class JobArtifacts(BaseModel):
     """Paths written under output/run-.../jobs/<slug>/."""
 

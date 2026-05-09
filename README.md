@@ -274,8 +274,56 @@ After every run, `jobapply` writes `output/run-<id>/jobs.csv` with one row per j
 | `jobapply init` | Interactive setup: provider + connection details + structured `profile.json`. **A resume is required**: pass `--resume <path>` (`.md` / `.txt` / `.docx` / `.pdf`, including LinkedIn PDF export) or `--paste` (read text from stdin / multiline prompt). The configured LLM extracts the resume into the [`Profile` schema](jobapply/profile.py) via structured output, so make sure your provider key is reachable before running it. `--non-interactive` skips provider prompts but still requires `--resume` or `--paste`. |
 | `jobapply config` | Re-run the provider prompts; `--show` prints the resolved config |
 | `jobapply run` | Full pipeline (prompts unless `--yes`) |
+| `jobapply tailor` | Tailor your resume + cover letter for **one** JD file (skip search). Optional `--with-email` drafts a ready-to-paste application email. See below. |
 | `jobapply resume <run-name>` | Continue from `meta.json` (default: reset checkpoint) |
 | `jobapply list` | List `output/run-*` folders |
+
+### `jobapply tailor` — single-JD mode
+
+When you already know which role you want to apply to, `jobapply tailor` skips the search / dedupe / ledger machinery and tailors your resume + cover letter directly against a job-description file you supply. Add `--with-email` to also produce a ready-to-paste application email.
+
+```bash
+# Resume + cover letter only.
+jobapply tailor --job ~/jds/acme-backend.pdf
+
+# Resume + cover letter + drafted email (recipient + extra context).
+jobapply tailor \
+  --job ~/jds/acme-backend.pdf \
+  --with-email \
+  --email-to recruiter@acme.com \
+  --email-context "Referred by Bob — available to start in two weeks."
+```
+
+Flags worth knowing:
+
+| Flag | Description |
+|------|-------------|
+| `--job` / `-j` | Path to the job description (`.md` / `.txt` / `.docx` / `.pdf`). Required. |
+| `--title` / `--company` / `--location` | Skip LLM JD-metadata extraction by forcing these values. |
+| `--skills` / `-s` | Comma-separated skills to bias the tailor towards (in addition to the JD content). |
+| `--profile` | Override `profile_path` from `jobapply.toml` (must point at `profile.json`). |
+| `--output-dir` / `-o` | Override `output_dir`. Artifacts land in `<output_dir>/tailor-<timestamp>/<slug>/`. |
+| `--no-pdf` | Skip the markdown-PDF + LaTeX-PDF pipelines (only `.md` / `.tex` are written). |
+| `--with-email` | Also draft an application email. Requires `--email-to` (or use the interactive prompt). |
+| `--email-to` | Recipient email address for the drafted email. |
+| `--email-context` | Optional free-form context the model weaves in (referrals, availability, prior contact). |
+| `--provider` / `--model` | Override provider / model from `jobapply.toml`. |
+
+Output layout (mirrors `jobapply run`'s per-job folder so the same PDF backends apply):
+
+```text
+output/tailor-<timestamp>/<slug>/
+├── resume.md
+├── resume.tex
+├── resume.pdf              # markdown -> PDF (pandoc / weasyprint / fpdf2)
+├── resume-latex.pdf        # styled LaTeX template (latex-on-http / tectonic / pdflatex)
+├── cover_letter.md
+├── cover_letter.tex
+├── cover_letter.pdf
+├── cover_letter-latex.pdf
+├── tailor_meta.json        # JD source + parsed title/company/location
+└── email.txt               # only when --with-email; To / Subject / body, ready to paste
+```
 
 ## Architecture
 
