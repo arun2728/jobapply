@@ -9,13 +9,16 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-ProviderName = Literal["gemini", "anthropic", "openai", "ollama", "cloudflare"]
+ProviderName = Literal[
+    "gemini", "anthropic", "openai", "ollama", "cloudflare", "openrouter"
+]
 PROVIDER_NAMES: tuple[ProviderName, ...] = (
     "gemini",
     "anthropic",
     "openai",
     "ollama",
     "cloudflare",
+    "openrouter",
 )
 
 DEFAULT_MODELS: dict[str, str] = {
@@ -27,11 +30,17 @@ DEFAULT_MODELS: dict[str, str] = {
     # https://developers.cloudflare.com/workers-ai/models/. The 8B Llama 3.1
     # is a sensible default — fast, free tier, supports tool/structured calls.
     "cloudflare": "@cf/openai/gpt-oss-120b",
+    # OpenRouter is an OpenAI-compatible router that exposes hundreds of
+    # models across vendors using ``vendor/model`` ids. We pick a cheap,
+    # widely-available model with reliable function-calling support so
+    # the bundled structured-output agents work out of the box.
+    "openrouter": "openai/gpt-4o-mini",
 }
 
 DEFAULT_BASE_URLS: dict[str, str] = {
     "ollama": "http://127.0.0.1:11434",
     "openai": "https://api.openai.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
 }
 
 # Cloudflare Workers AI exposes an OpenAI-compatible endpoint under each
@@ -230,6 +239,8 @@ def get_api_key(cfg: AppConfig, provider: str) -> str | None:
         return os.environ.get("CLOUDFLARE_API_TOKEN") or os.environ.get(
             "CLOUDFLARE_WORKERS_AI_TOKEN"
         )
+    if p == "openrouter":
+        return os.environ.get("OPENROUTER_API_KEY")
     return None
 
 
@@ -324,6 +335,8 @@ def get_base_url(cfg: AppConfig, provider: str) -> str | None:
         if gateway_id:
             return cloudflare_gateway_base_url(account_id, gateway_id)
         return cloudflare_base_url(account_id)
+    if p == "openrouter":
+        return os.environ.get("OPENROUTER_BASE_URL") or DEFAULT_BASE_URLS["openrouter"]
     return None
 
 
