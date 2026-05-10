@@ -293,7 +293,17 @@ def _education_latex(education: list[EducationItem]) -> str:
         return ""
     parts: list[str] = ["\\section{Education}"]
     for e in education:
-        parts.append(rf"\headingBf{{{latex_escape(e.school)}}}{{{latex_escape(e.dates)}}}")
+        # Location piggy-backs on the school cell so we don't need a
+        # second header row per entry. Falls back gracefully when
+        # ``location`` is absent (older profiles, legacy callers).
+        school_label = e.school
+        if e.location.strip():
+            school_label = (
+                f"{e.school}, {e.location.strip()}"
+                if e.school.strip()
+                else e.location.strip()
+            )
+        parts.append(rf"\headingBf{{{latex_escape(school_label)}}}{{{latex_escape(e.dates)}}}")
         right = ""
         if e.gpa.strip():
             right = rf"\textbf{{GPA:}} \textbf{{{latex_escape(e.gpa.strip())}}}"

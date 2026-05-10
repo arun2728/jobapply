@@ -30,7 +30,7 @@
 {% if tr.education %}## Education
 
 {% for ed in tr.education %}
-### {{ ed.school }}{% if ed.dates %} ({{ ed.dates }}){% endif %}
+### {{ ed.school }}{% if ed.location %}, {{ ed.location }}{% endif %}{% if ed.dates %} ({{ ed.dates }}){% endif %}
 
 {% if ed.degree %}**{{ ed.degree }}**{% endif %}{% if ed.gpa %} — GPA: {{ ed.gpa }}{% elif ed.details %} — {{ ed.details }}{% endif %}
 {% if ed.coursework %}

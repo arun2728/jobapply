@@ -321,6 +321,7 @@ def test_workspace_flush_files_round_trips_catalog(tmp_path: Path) -> None:
 
 def _fake_chat_model() -> Any:
     """Re-uses the fake LLM pattern from test_graph_offline."""
+    from jobapply.agents.resume_tailor import _TailoredBullets
     from jobapply.models import CoverLetter, FitScore, TailoredResume
 
     class _FakeStructured:
@@ -334,6 +335,20 @@ def _fake_chat_model() -> Any:
         def with_structured_output(self, schema: type[Any]) -> Any:
             if schema.__name__ == "FitScore":
                 return _FakeStructured(FitScore(score=0.9, rationale="ok"))
+            # The resume-tailor agent now asks for a compact
+            # ``_TailoredBullets`` payload when the graph passes a
+            # structured profile (the standard production path) and
+            # only falls back to the full ``TailoredResume`` schema
+            # for legacy callers without a profile.
+            if schema is _TailoredBullets:
+                return _FakeStructured(
+                    _TailoredBullets(
+                        summary="s",
+                        skills=["Python"],
+                        experience_bullets=[],
+                        project_bullets=[],
+                    )
+                )
             if schema.__name__ == "TailoredResume":
                 return _FakeStructured(
                     TailoredResume(
