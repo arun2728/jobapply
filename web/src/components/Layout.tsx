@@ -3,9 +3,10 @@ import {
   Briefcase,
   ClipboardList,
   History,
+  Loader2,
   PenSquare,
 } from "lucide-react";
-import { useStatus } from "@/lib/hooks";
+import { useActiveTasks, useStatus } from "@/lib/hooks";
 import clsx from "clsx";
 
 const navItems = [
@@ -16,6 +17,10 @@ const navItems = [
 
 export default function Layout() {
   const status = useStatus();
+  // Mounted at the layout level so polling continues across page
+  // navigations — when the user clicks Tailor and then jumps back to
+  // the dashboard, the task tracker keeps the JobCard in sync.
+  const active = useActiveTasks();
   const total = status.data?.workspace_total_jobs ?? 0;
 
   return (
@@ -45,26 +50,47 @@ export default function Layout() {
               </div>
             </div>
           </div>
-          <nav className="flex items-center gap-1">
-            {navItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                className={({ isActive }) =>
-                  clsx(
-                    "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                    isActive
-                      ? "bg-slate-800 text-white"
-                      : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100",
-                  )
+          <div className="flex items-center gap-3">
+            {active.hasActive ? (
+              <div
+                className="hidden items-center gap-2 rounded-full border border-brand-500/40 bg-brand-500/10 px-3 py-1 text-xs font-medium text-brand-200 sm:flex"
+                title={
+                  active.all
+                    .map(
+                      (t) =>
+                        `${t.kind}: ${t.progress?.label || t.status}`,
+                    )
+                    .join("\n")
                 }
               >
-                <item.icon size={16} />
-                <span className="hidden sm:inline">{item.label}</span>
-              </NavLink>
-            ))}
-          </nav>
+                <Loader2 size={12} className="animate-spin" />
+                <span>
+                  {active.all.length}{" "}
+                  {active.all.length === 1 ? "job" : "jobs"} in progress
+                </span>
+              </div>
+            ) : null}
+            <nav className="flex items-center gap-1">
+              {navItems.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) =>
+                    clsx(
+                      "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                      isActive
+                        ? "bg-slate-800 text-white"
+                        : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100",
+                    )
+                  }
+                >
+                  <item.icon size={16} />
+                  <span className="hidden sm:inline">{item.label}</span>
+                </NavLink>
+              ))}
+            </nav>
+          </div>
         </div>
       </header>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 sm:py-10">

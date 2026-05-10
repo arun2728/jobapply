@@ -690,3 +690,199 @@ def test_artifact_endpoint_rejects_path_traversal(
     assert forbidden.status_code in {400, 404}
     not_allowed = client.get("/api/jobs/a1/artifacts/secret.txt")
     assert not_allowed.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Live LaTeX editor endpoints — PUT save + POST compile
+# ---------------------------------------------------------------------------
+
+
+def _seed_tailored_job(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Run a stubbed search + tailor so the per-job dir exists and we
+    can target the editor endpoints. Returns the job's directory."""
+    from jobapply import server as srv
+
+    monkeypatch.setattr(
+        srv, "iter_search_jobs", lambda inp: iter([_stub_raw("edit1")])
+    )
+    seed = client.post("/api/search", json={"titles": ["X"]}).json()
+    _wait_for_task(client, seed["task_id"])
+    monkeypatch.setattr(srv, "create_chat_model", lambda *a, **kw: object())
+
+    def _fake_tailor(llm: Any, **kwargs: Any) -> Any:
+        from jobapply.tailor_one import TailorOutputs
+
+        jd_path = Path(kwargs["jd_path"])
+        job_dir = jd_path.parent
+        (job_dir / "resume.tex").write_text(
+            "\\documentclass{article}\n\\begin{document}\nResume\n\\end{document}\n",
+            encoding="utf-8",
+        )
+        (job_dir / "cover_letter.tex").write_text(
+            "\\documentclass{article}\n\\begin{document}\nCover\n\\end{document}\n",
+            encoding="utf-8",
+        )
+        (job_dir / "resume.md").write_text("R", encoding="utf-8")
+        (job_dir / "cover_letter.md").write_text("C", encoding="utf-8")
+        return TailorOutputs(
+            job_dir=job_dir,
+            job=_stub_raw("edit1"),
+            resume=_stub_tailored_resume(),
+            cover=_stub_cover_letter(),
+            email=None,
+            resume_md=job_dir / "resume.md",
+            resume_tex=job_dir / "resume.tex",
+            cover_md=job_dir / "cover_letter.md",
+            cover_tex=job_dir / "cover_letter.tex",
+        )
+
+    monkeypatch.setattr(srv, "tailor_for_job_description", _fake_tailor)
+    resp = client.post("/api/jobs/edit1/tailor", json={"no_pdf": True})
+    _wait_for_task(client, resp.json()["task_id"])
+    job_meta = client.get("/api/jobs/edit1").json()
+    rel = job_meta["job_dir_relative"]
+    return Path(client.app.state.ctx.workspace.path) / rel  # type: ignore[attr-defined]
+
+
+def test_save_artifact_writes_edited_tex_to_disk(
+    app_factory: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PUT /api/jobs/<id>/artifacts/resume.tex must overwrite the file
+    the tailor pipeline wrote and report the new byte count."""
+    client, *_ = app_factory()
+    job_dir = _seed_tailored_job(client, monkeypatch)
+
+    new_body = (
+        "\\documentclass{article}\n\\begin{document}\n"
+        "Edited resume body — added a section.\n\\end{document}\n"
+    )
+    resp = client.put(
+        "/api/jobs/edit1/artifacts/resume.tex",
+        json={"content": new_body},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "resume.tex"
+    assert body["bytes"] == len(new_body.encode("utf-8"))
+    on_disk = (job_dir / "resume.tex").read_text(encoding="utf-8")
+    assert on_disk == new_body
+    # Re-fetching via the read endpoint should now return the edit.
+    fetched = client.get("/api/jobs/edit1/artifacts/resume.tex")
+    assert fetched.status_code == 200
+    assert "Edited resume body" in fetched.text
+
+
+def test_save_artifact_rejects_non_editable_filename(
+    app_factory: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whitelist must keep callers out of files like ``job.json``
+    or ``email.txt`` that would silently desync workspace state."""
+    client, *_ = app_factory()
+    _seed_tailored_job(client, monkeypatch)
+
+    resp = client.put(
+        "/api/jobs/edit1/artifacts/job.json",
+        json={"content": "{}"},
+    )
+    assert resp.status_code == 400
+    assert "not editable" in resp.json()["detail"].lower()
+
+
+def test_save_artifact_404_for_unknown_job(app_factory: Any) -> None:
+    client, *_ = app_factory()
+    resp = client.put(
+        "/api/jobs/no-such-job/artifacts/resume.tex",
+        json={"content": "x"},
+    )
+    assert resp.status_code == 404
+
+
+def test_compile_artifact_invokes_tex_backend_and_returns_metadata(
+    app_factory: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """POST /api/jobs/<id>/artifacts/resume.tex/compile should call
+    ``tex_to_pdf`` with the saved source and surface the resulting
+    PDF metadata so the UI can refresh its preview iframe."""
+    client, *_ = app_factory()
+    job_dir = _seed_tailored_job(client, monkeypatch)
+
+    from jobapply import server as srv
+
+    monkeypatch.setattr(srv, "probe_tex_pdf_backend", lambda: "tectonic")
+    seen: dict[str, Any] = {}
+
+    def _fake_tex_to_pdf(tex_path: Path, out_dir: Path) -> Path | None:
+        seen["tex_path"] = tex_path
+        seen["out_dir"] = out_dir
+        pdf_path = out_dir / (tex_path.stem + ".pdf")
+        pdf_path.write_bytes(b"%PDF-1.4 fake content")
+        return pdf_path
+
+    monkeypatch.setattr(srv, "tex_to_pdf", _fake_tex_to_pdf)
+
+    resp = client.post("/api/jobs/edit1/artifacts/resume.tex/compile")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["name"] == "resume.pdf"
+    assert body["backend"] == "tectonic"
+    assert body["size"] > 0
+    assert seen["tex_path"] == job_dir / "resume.tex"
+    assert seen["out_dir"] == job_dir
+    # And the artifact endpoint must serve the freshly-written PDF.
+    pdf = client.get("/api/jobs/edit1/artifacts/resume.pdf")
+    assert pdf.status_code == 200
+    assert pdf.content.startswith(b"%PDF")
+
+
+def test_compile_artifact_503_when_no_backend_available(
+    app_factory: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When neither tectonic / pdflatex / latex-on-http is available
+    we want a clear 503 telling the user to install one — not a
+    silent failure that mimics 'compile failed: bad LaTeX'."""
+    client, *_ = app_factory()
+    _seed_tailored_job(client, monkeypatch)
+
+    from jobapply import server as srv
+
+    monkeypatch.setattr(srv, "probe_tex_pdf_backend", lambda: "")
+
+    resp = client.post("/api/jobs/edit1/artifacts/resume.tex/compile")
+    assert resp.status_code == 503
+    assert "LaTeX" in resp.json()["detail"]
+
+
+def test_compile_artifact_502_when_backend_returns_none(
+    app_factory: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real LaTeX syntax error makes ``tex_to_pdf`` return ``None``;
+    we surface that as 502 + a hint so the UI can render an error
+    instead of pretending the compile succeeded."""
+    client, *_ = app_factory()
+    _seed_tailored_job(client, monkeypatch)
+
+    from jobapply import server as srv
+
+    monkeypatch.setattr(srv, "probe_tex_pdf_backend", lambda: "tectonic")
+    monkeypatch.setattr(
+        srv, "tex_to_pdf", lambda *a, **kw: None  # type: ignore[arg-type]
+    )
+
+    resp = client.post("/api/jobs/edit1/artifacts/resume.tex/compile")
+    assert resp.status_code == 502
+    assert "tectonic" in resp.json()["detail"]
+
+
+def test_compile_artifact_400_for_non_compilable_filename(
+    app_factory: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``resume.md`` is editable but not compilable — the endpoint
+    must reject it before reaching the LaTeX backend."""
+    client, *_ = app_factory()
+    _seed_tailored_job(client, monkeypatch)
+
+    resp = client.post("/api/jobs/edit1/artifacts/resume.md/compile")
+    assert resp.status_code == 400
+    assert "not be compiled" in resp.json()["detail"] or "compilable" in resp.json()["detail"]

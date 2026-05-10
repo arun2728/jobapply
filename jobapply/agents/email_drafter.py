@@ -13,6 +13,7 @@ from __future__ import annotations
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from jobapply.agents._structured import invoke_structured
 from jobapply.models import CoverLetter, EmailDraft, RawJob, TailoredResume
 
 
@@ -39,7 +40,6 @@ def draft_application_email(
     ``additional_info`` is optional: when blank we just rely on the
     JD + resume / profile context.
     """
-    structured = llm.with_structured_output(EmailDraft)
     fallback_name = (
         (resume.document_title if resume else "") or ""
     ).strip()
@@ -122,8 +122,7 @@ def draft_application_email(
             f"{(profile_text or '')[:4000]}"
         ),
     )
-    result = structured.invoke([sys, user])
-    assert isinstance(result, EmailDraft)
+    result = invoke_structured(llm, EmailDraft, [sys, user])
 
     if not result.to.strip() and recipient_email.strip():
         result.to = recipient_email.strip()

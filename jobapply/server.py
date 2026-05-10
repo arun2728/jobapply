@@ -51,6 +51,7 @@ from jobapply.models import (
     LedgerStatus,
     RawJob,
 )
+from jobapply.nodes.render import probe_tex_pdf_backend, tex_to_pdf
 from jobapply.profile import (
     Profile,
     ProfileLoadError,
@@ -131,6 +132,19 @@ class EmailRequest(BaseModel):
     additional_info: str = ""
     provider: str | None = None
     model: str | None = None
+
+
+class ArtifactSaveRequest(BaseModel):
+    """Body for ``PUT /api/jobs/{job_id}/artifacts/{name}``.
+
+    The UI uses this to save edits made in the in-browser LaTeX
+    editor. We deliberately ship the content as a single string
+    rather than as a multipart upload — these files are small (well
+    under 100 KB each) and a JSON round-trip composes nicely with
+    React Query's mutation cache.
+    """
+
+    content: str
 
 
 class StatusResponse(BaseModel):
@@ -602,6 +616,117 @@ def _register_routes(app: FastAPI) -> None:
         if not path.is_file():
             raise HTTPException(status_code=404, detail=f"Artifact not found: {name}")
         return FileResponse(path)
+
+    # ------------------------------------------------------------------
+    # Live LaTeX editing
+    # ------------------------------------------------------------------
+    # The UI lets users tweak the model-generated ``resume.tex`` /
+    # ``cover_letter.tex`` and then recompile to PDF without rerunning
+    # the entire tailor pipeline. Editing is gated to the LaTeX
+    # sources (and the markdown fallbacks) — touching ``job.json`` or
+    # ``email.txt`` from the browser would silently desync workspace
+    # state, which is more pain than it's worth.
+    EDITABLE_ARTIFACTS = {
+        "resume.tex",
+        "cover_letter.tex",
+        "resume.md",
+        "cover_letter.md",
+    }
+    COMPILABLE_ARTIFACTS = {"resume.tex", "cover_letter.tex"}
+
+    @app.put("/api/jobs/{job_id}/artifacts/{name}")
+    def save_artifact(
+        job_id: str,
+        name: str,
+        payload: ArtifactSaveRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        ctx: ServerContext = request.app.state.ctx
+        ws = ctx.workspace
+        record = ws.get(job_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}")
+        if name not in EDITABLE_ARTIFACTS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Artifact '{name}' is not editable. Editable: "
+                    f"{sorted(EDITABLE_ARTIFACTS)}."
+                ),
+            )
+        # Sanity-check the body length so a hung paste doesn't blow up
+        # the server. 1 MB is a generous limit for LaTeX sources.
+        if len(payload.content) > 1_000_000:
+            raise HTTPException(
+                status_code=413, detail="Artifact content too large (>1 MB)."
+            )
+        job_dir = _resolve_job_dir(ws, record)
+        job_dir.mkdir(parents=True, exist_ok=True)
+        path = job_dir / name
+        path.write_text(payload.content, encoding="utf-8")
+        st = path.stat()
+        return {
+            "name": name,
+            "bytes": st.st_size,
+            "mtime": st.st_mtime,
+            "saved": str(path.relative_to(ws.path)),
+        }
+
+    @app.post("/api/jobs/{job_id}/artifacts/{name}/compile")
+    def compile_artifact(
+        job_id: str, name: str, request: Request
+    ) -> dict[str, Any]:
+        ctx: ServerContext = request.app.state.ctx
+        ws = ctx.workspace
+        record = ws.get(job_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}")
+        if name not in COMPILABLE_ARTIFACTS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Artifact '{name}' cannot be compiled to PDF. "
+                    f"Compilable: {sorted(COMPILABLE_ARTIFACTS)}."
+                ),
+            )
+        job_dir = _resolve_job_dir(ws, record)
+        tex_path = job_dir / name
+        if not tex_path.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail=f"LaTeX source not found: {name}. Save it first.",
+            )
+        backend = probe_tex_pdf_backend()
+        if not backend:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "No LaTeX → PDF backend available. Install "
+                    "`tectonic` or `pdflatex`, or enable the "
+                    "latex_api in jobapply.toml."
+                ),
+            )
+        # ``tex_to_pdf`` walks the configured backends and silently
+        # returns ``None`` on failure — we don't get a build log out of
+        # any of them. A 500 with the backend name is the most
+        # actionable thing we can surface today.
+        pdf_path = tex_to_pdf(tex_path, job_dir)
+        if pdf_path is None or not pdf_path.is_file():
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"LaTeX compile via '{backend}' failed. The source "
+                    "likely has a syntax error — re-run the tailor "
+                    "pipeline or fix the .tex by hand."
+                ),
+            )
+        st = pdf_path.stat()
+        return {
+            "name": pdf_path.name,
+            "size": st.st_size,
+            "mtime": st.st_mtime,
+            "backend": backend,
+        }
 
     @app.delete("/api/jobs/{job_id}")
     def delete_job(job_id: str, request: Request) -> dict[str, Any]:

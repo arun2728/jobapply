@@ -5,6 +5,7 @@ from __future__ import annotations
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from jobapply.agents._structured import invoke_structured
 from jobapply.models import OutreachMessages, RawJob
 
 
@@ -14,7 +15,6 @@ def write_networking(
     profile_text: str,
     job: RawJob,
 ) -> OutreachMessages:
-    structured = llm.with_structured_output(OutreachMessages)
     jd = (job.description or "")[:6000]
     sys = SystemMessage(
         content=(
@@ -31,6 +31,4 @@ def write_networking(
             f"JD excerpt:\n{jd}\n\nCV/PROFILE excerpt:\n{profile_text[:6000]}"
         ),
     )
-    result = structured.invoke([sys, user])
-    assert isinstance(result, OutreachMessages)
-    return result
+    return invoke_structured(llm, OutreachMessages, [sys, user])

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -9,14 +9,16 @@ import {
   Loader2,
   Mail,
   MapPin,
+  Pencil,
   Trash2,
   Wand2,
 } from "lucide-react";
 import {
+  useActiveTaskFor,
   useDeleteJob,
   useJob,
+  useLastTaskFor,
   useStartTailor,
-  useTaskPoll,
 } from "@/lib/hooks";
 import {
   formatScore,
@@ -50,10 +52,30 @@ export default function JobDetail() {
   const job = useJob(jobId);
   const tailor = useStartTailor(jobId ?? "");
   const deleteJob = useDeleteJob();
-  const [tailorTaskId, setTailorTaskId] = useState<string | null>(null);
-  const tailorTask = useTaskPoll(tailorTaskId);
   const [emailOpen, setEmailOpen] = useState(false);
   const [tailorOpen, setTailorOpen] = useState(false);
+  // Pick up any tailor/run/email task targeting this job — whether
+  // we kicked it off from this page or from somewhere else (e.g. the
+  // dashboard batch tailor). The hook returns null when nothing is
+  // currently active.
+  const live = useActiveTaskFor(jobId);
+  const lastTask = useLastTaskFor(jobId);
+  const liveKind = live.task?.kind;
+  const isWorking = Boolean(live.task);
+  const isTailoring = liveKind === "tailor" || liveKind === "run";
+  const isDraftingEmail = liveKind === "email";
+
+  // Sticky task ID: keep showing the TaskProgress panel even after a
+  // task settles to a terminal state. Without this the panel
+  // disappears the instant the task fails — leaving the user with no
+  // hint of what went wrong. We seed it from the live task and
+  // keep the most recent terminal task visible until the user kicks
+  // off a new run.
+  const [stickyTaskId, setStickyTaskId] = useState<string | null>(null);
+  useEffect(() => {
+    if (live.task) setStickyTaskId(live.task.task_id);
+    else if (lastTask && !stickyTaskId) setStickyTaskId(lastTask.task_id);
+  }, [live.task?.task_id, lastTask?.task_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!jobId) return null;
   if (job.isLoading) {
@@ -91,7 +113,9 @@ export default function JobDetail() {
         model: opts.model,
         no_pdf: opts.no_pdf,
       });
-      setTailorTaskId(t.task_id);
+      // Capture the new task_id immediately so any prior failure
+      // panel is replaced rather than lingering side-by-side.
+      setStickyTaskId(t.task_id);
       setTailorOpen(false);
     } catch {
       // mutation error stays visible in the modal via the spinner state
@@ -173,32 +197,46 @@ export default function JobDetail() {
           <button
             className="btn-primary"
             onClick={() => setTailorOpen(true)}
-            disabled={tailorTask.task?.status === "running"}
+            disabled={isWorking}
           >
-            {tailorTask.task?.status === "running" ? (
+            {isTailoring ? (
               <Loader2 size={14} className="animate-spin" />
             ) : (
               <Wand2 size={14} />
             )}
-            {isTailored ? "Re-tailor" : "Tailor resume + cover letter"}
+            {isTailoring
+              ? liveKind === "run"
+                ? "Tailoring (batch)…"
+                : "Tailoring…"
+              : isTailored
+                ? "Re-tailor"
+                : "Tailor resume + cover letter"}
           </button>
           <button
             className="btn-secondary"
             onClick={() => setEmailOpen(true)}
+            disabled={isWorking}
             title={
-              isTailored
-                ? "Draft a recruiter email referencing your tailored resume."
-                : "Draft a short recruiter email from the JD + your profile (no attachments mentioned)."
+              isDraftingEmail
+                ? "An email draft is currently being generated for this job."
+                : isTailored
+                  ? "Draft a recruiter email referencing your tailored resume."
+                  : "Draft a short recruiter email from the JD + your profile (no attachments mentioned)."
             }
           >
-            <Mail size={14} /> Draft email
+            {isDraftingEmail ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <Mail size={14} />
+            )}
+            {isDraftingEmail ? "Drafting email…" : "Draft email"}
           </button>
         </div>
       </header>
 
-      {tailorTaskId ? (
+      {stickyTaskId ? (
         <TaskProgress
-          taskId={tailorTaskId}
+          taskId={stickyTaskId}
           onDone={() => job.refetch()}
         />
       ) : null}
@@ -229,6 +267,24 @@ export default function JobDetail() {
                 </a>
               ) : null,
             )}
+            {available["resume.tex"] ? (
+              <Link
+                to={`/jobs/${j.job_id}/edit/resume.tex`}
+                className="btn-secondary"
+                title="Open the live LaTeX editor for the tailored resume"
+              >
+                <Pencil size={14} /> Edit resume.tex
+              </Link>
+            ) : null}
+            {available["cover_letter.tex"] ? (
+              <Link
+                to={`/jobs/${j.job_id}/edit/cover_letter.tex`}
+                className="btn-secondary"
+                title="Open the live LaTeX editor for the cover letter"
+              >
+                <Pencil size={14} /> Edit cover_letter.tex
+              </Link>
+            ) : null}
           </div>
           <details className="text-sm">
             <summary className="cursor-pointer text-slate-400 hover:text-slate-200">

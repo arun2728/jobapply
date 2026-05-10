@@ -68,6 +68,8 @@ export const api = {
       "/api/searches",
     ),
   task: (taskId: string) => request<TaskRecord>(`/api/tasks/${taskId}`),
+  tasksList: (limit = 25) =>
+    request<{ tasks: TaskRecord[] }>(`/api/tasks?limit=${limit}`),
   cancelTask: (taskId: string) =>
     request<{ cancelled: string }>(`/api/tasks/${taskId}/cancel`, {
       method: "POST",
@@ -139,6 +141,33 @@ export const api = {
     request<EmailHint>(`/api/jobs/${jobId}/email-hint`),
   artifactUrl: (jobId: string, name: string) =>
     `/api/jobs/${jobId}/artifacts/${encodeURIComponent(name)}`,
+  /** Fetch an editable artifact's text content. The backend serves
+   *  the raw file via the same ``/artifacts/<name>`` endpoint as the
+   *  download link — so we just read it as text. */
+  artifactText: async (jobId: string, name: string): Promise<string> => {
+    const res = await fetch(
+      `/api/jobs/${jobId}/artifacts/${encodeURIComponent(name)}`,
+    );
+    if (!res.ok) {
+      throw new ApiError(res.status, `HTTP ${res.status}`, null);
+    }
+    return res.text();
+  },
+  saveArtifact: (jobId: string, name: string, content: string) =>
+    request<{ name: string; bytes: number; mtime: number; saved: string }>(
+      `/api/jobs/${jobId}/artifacts/${encodeURIComponent(name)}`,
+      { method: "PUT", json: { content } },
+    ),
+  compileArtifact: (jobId: string, name: string) =>
+    request<{
+      name: string;
+      size: number;
+      mtime: number;
+      backend: string;
+    }>(
+      `/api/jobs/${jobId}/artifacts/${encodeURIComponent(name)}/compile`,
+      { method: "POST" },
+    ),
 };
 
 export type { EmailDraft, EmailHint };

@@ -5,6 +5,7 @@ from __future__ import annotations
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from jobapply.agents._structured import invoke_structured
 from jobapply.models import (
     ExperienceRole,
     ProjectItem,
@@ -85,7 +86,6 @@ def tailor_resume(
     not explicitly named in the prompt), we fill those sections in from
     the profile verbatim. ``None`` disables the safety net.
     """
-    structured = llm.with_structured_output(TailoredResume)
     jd = (job.description or "")[:12000]
     canonical_skills: list[str] = profile_skills or []
     sys = SystemMessage(
@@ -144,8 +144,7 @@ def tailor_resume(
             f"BASE PROFILE (source of truth):\n{profile_text[:20000]}"
         ),
     )
-    result = structured.invoke([sys, user])
-    assert isinstance(result, TailoredResume)
+    result = invoke_structured(llm, TailoredResume, [sys, user])
 
     # Belt-and-suspenders: even with explicit prompting, models occasionally
     # drop "irrelevant" skills. Re-merge against the canonical list so the

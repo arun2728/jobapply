@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Loader2, Mail, X } from "lucide-react";
 import {
+  useActiveTaskFor,
   useEmailHint,
   useProviders,
   useStartEmail,
@@ -43,6 +44,10 @@ export default function EmailModal({
   const [taskId, setTaskId] = useState<string | null>(null);
   const start = useStartEmail(jobId);
   const { task } = useTaskPoll(taskId);
+  // If a draft for this job was kicked off (here or from somewhere
+  // else) and the user closed/re-opened the modal, the task tracker
+  // resurfaces it so progress + the eventual result show up again.
+  const live = useActiveTaskFor(jobId, ["email"]);
 
   useEffect(() => {
     if (open && hint.data?.primary_email && !recipient) {
@@ -61,6 +66,13 @@ export default function EmailModal({
     setProvider(providers.data.active_provider);
     setModel(providers.data.active_model);
   }, [open, providers.data]);
+
+  // Re-attach to an in-flight draft when the modal is re-opened.
+  useEffect(() => {
+    if (!open) return;
+    if (taskId) return;
+    if (live.task) setTaskId(live.task.task_id);
+  }, [open, live.task, taskId]);
 
   if (!open) return null;
   const draft = task?.result as EmailDraft | undefined;

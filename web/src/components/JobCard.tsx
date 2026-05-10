@@ -1,8 +1,10 @@
 import { Link } from "react-router-dom";
 import {
+  AlertTriangle,
   Building2,
   ExternalLink,
   FileCheck2,
+  Loader2,
   Mail,
   MapPin,
 } from "lucide-react";
@@ -12,6 +14,7 @@ import {
   pickAcceptableUrl,
   shortHostname,
 } from "@/lib/format";
+import { useActiveTaskFor, useLastTaskFor } from "@/lib/hooks";
 import type { JobRecord } from "@/lib/types";
 import Markdown from "./Markdown";
 
@@ -27,12 +30,28 @@ export default function JobCard({ job, selected, onToggle }: Props) {
   const host = shortHostname(url);
   const isTailored = job.status === "done" || !!job.tailored_resume;
   const recipient = job.application?.primary_email;
+  const hasEmailDraft = Boolean(job.available_artifacts?.["email.txt"]);
+  const live = useActiveTaskFor(job.job_id);
+  const liveKind = live.task?.kind;
+  // We only surface the *last* task when it's a failure and nothing
+  // is currently running for this job — succeeded runs already
+  // manifest as the resume/email artifacts. ``run`` is excluded so
+  // that batch failures reported on a peer job don't pollute every
+  // card in the batch.
+  const lastTask = useLastTaskFor(job.job_id);
+  const failedTask =
+    !live.task &&
+    lastTask &&
+    lastTask.status === "failed" &&
+    lastTask.kind !== "run"
+      ? lastTask
+      : null;
 
   return (
     <div
       className={`card flex flex-col gap-3 p-4 transition-colors ${
         selected ? "ring-2 ring-brand-400/60" : "hover:border-slate-700"
-      }`}
+      } ${live.task ? "border-brand-500/40 ring-1 ring-brand-500/30" : ""}`}
     >
       <div className="flex items-start gap-3">
         {onToggle ? (
@@ -73,7 +92,28 @@ export default function JobCard({ job, selected, onToggle }: Props) {
           </div>
         </div>
         <div className="flex flex-col items-end gap-1">
-          <span className={"badge " + status.className}>{status.label}</span>
+          {live.task ? (
+            <span className="badge bg-brand-500/15 text-brand-200 ring-1 ring-brand-500/40">
+              <Loader2 size={10} className="mr-1 animate-spin" />
+              {liveKind === "email"
+                ? "Drafting email"
+                : liveKind === "run"
+                  ? "Tailoring (batch)"
+                  : "Tailoring"}
+            </span>
+          ) : failedTask ? (
+            <span
+              className="badge bg-rose-500/15 text-rose-200 ring-1 ring-rose-500/40"
+              title={(failedTask.error || "").slice(0, 600)}
+            >
+              <AlertTriangle size={10} className="mr-1" />
+              {failedTask.kind === "email"
+                ? "Email failed"
+                : "Tailor failed"}
+            </span>
+          ) : (
+            <span className={"badge " + status.className}>{status.label}</span>
+          )}
           {job.fit ? (
             <span className="text-xs text-slate-400">
               fit{" "}
@@ -84,6 +124,21 @@ export default function JobCard({ job, selected, onToggle }: Props) {
           ) : null}
         </div>
       </div>
+      {live.task ? (
+        <div className="-mt-1 space-y-1">
+          <div className="h-1 overflow-hidden rounded-full bg-slate-800">
+            <div
+              className="h-full rounded-full bg-brand-400 transition-all"
+              style={{
+                width: `${Math.max(8, Math.min(100, live.percent || 12))}%`,
+              }}
+            />
+          </div>
+          <div className="text-[11px] uppercase tracking-wide text-brand-300">
+            {live.label}
+          </div>
+        </div>
+      ) : null}
       {job.fit?.rationale ? (
         <p className="line-clamp-2 text-sm text-slate-400">
           {job.fit.rationale}
@@ -97,14 +152,26 @@ export default function JobCard({ job, selected, onToggle }: Props) {
         </Markdown>
       ) : null}
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        {isTailored ? (
+        {liveKind === "tailor" || liveKind === "run" ? (
+          <span className="flex items-center gap-1 text-brand-300">
+            <Loader2 size={12} className="animate-spin" /> Tailoring resume…
+          </span>
+        ) : isTailored ? (
           <span className="flex items-center gap-1 text-brand-300">
             <FileCheck2 size={12} /> Resume + cover ready
           </span>
         ) : (
           <span className="text-slate-500">No resume yet</span>
         )}
-        {recipient ? (
+        {liveKind === "email" ? (
+          <span className="flex items-center gap-1 text-amber-300">
+            <Loader2 size={12} className="animate-spin" /> Drafting email…
+          </span>
+        ) : hasEmailDraft ? (
+          <span className="flex items-center gap-1 text-amber-300">
+            <Mail size={12} /> Email drafted
+          </span>
+        ) : recipient ? (
           <span className="flex items-center gap-1 text-amber-300">
             <Mail size={12} /> {recipient}
           </span>

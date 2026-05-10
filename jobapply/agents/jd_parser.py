@@ -17,6 +17,7 @@ from __future__ import annotations
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from jobapply.agents._structured import invoke_structured
 from jobapply.models import JobDescriptionMeta
 
 
@@ -26,7 +27,6 @@ def parse_job_description(llm: BaseChatModel, *, text: str) -> JobDescriptionMet
     Returns an empty :class:`JobDescriptionMeta` when the LLM can't find
     the value; the orchestrator decides whether to prompt the user.
     """
-    structured = llm.with_structured_output(JobDescriptionMeta)
     sys = SystemMessage(
         content=(
             "You read a job description and extract three plain-text "
@@ -38,6 +38,4 @@ def parse_job_description(llm: BaseChatModel, *, text: str) -> JobDescriptionMet
         ),
     )
     user = HumanMessage(content=f"JOB DESCRIPTION:\n{(text or '')[:12000]}")
-    result = structured.invoke([sys, user])
-    assert isinstance(result, JobDescriptionMeta)
-    return result
+    return invoke_structured(llm, JobDescriptionMeta, [sys, user])
