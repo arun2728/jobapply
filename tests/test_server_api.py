@@ -443,12 +443,14 @@ def test_tailor_one_returns_400_when_description_empty(
     assert "description" in resp.json()["detail"].lower()
 
 
-def test_email_endpoint_drafts_after_tailor(
+def test_email_endpoint_works_without_tailored_artifacts(
     app_factory: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """POST /api/jobs/<id>/email should refuse to draft until the job
-    has been tailored, then succeed once tailor results exist."""
+    """POST /api/jobs/<id>/email should draft from JD + profile when
+    no tailored resume / cover letter exist yet, and explicitly call
+    the drafter with ``resume=None`` / ``cover=None`` so the agent
+    knows not to fabricate attachments."""
     client, *_ = app_factory()
     from jobapply import server as srv
 
@@ -457,12 +459,49 @@ def test_email_endpoint_drafts_after_tailor(
     )
     seed = client.post("/api/search", json={"titles": ["X"]}).json()
     _wait_for_task(client, seed["task_id"])
+    monkeypatch.setattr(srv, "create_chat_model", lambda *a, **kw: object())
 
-    too_early = client.post(
+    seen: dict[str, Any] = {}
+
+    def _fake_drafter(llm: Any, **kw: Any) -> EmailDraft:
+        seen.update(kw)
+        return EmailDraft(
+            to=kw["recipient_email"],
+            subject="Application — ML Engineer",
+            body="Hello, I'd love to apply for this role.",
+        )
+
+    monkeypatch.setattr(srv, "draft_application_email", _fake_drafter)
+    resp = client.post(
         "/api/jobs/a1/email", json={"recipient": "rec@example.com"}
     )
-    assert too_early.status_code == 400
+    assert resp.status_code == 200, resp.text
+    final = _wait_for_task(client, resp.json()["task_id"])
+    assert final["status"] == "succeeded", final
+    assert final["result"]["to"] == "rec@example.com"
+    # The drafter receives None for resume/cover so it knows to skip
+    # the attachment claim in the prompt.
+    assert seen["resume"] is None
+    assert seen["cover"] is None
+    # JD body still flows through so the email is grounded.
+    assert "Senior ML role" in seen["job"].description
 
+
+def test_email_endpoint_uses_artifacts_when_tailored(
+    app_factory: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once a job has been tailored, /api/jobs/<id>/email should pass
+    the tailored resume + cover letter into the drafter so the
+    polished "attachments included" path is exercised."""
+    client, *_ = app_factory()
+    from jobapply import server as srv
+
+    monkeypatch.setattr(
+        srv, "iter_search_jobs", lambda inp: iter([_stub_raw("a1")])
+    )
+    seed = client.post("/api/search", json={"titles": ["X"]}).json()
+    _wait_for_task(client, seed["task_id"])
     monkeypatch.setattr(srv, "create_chat_model", lambda *a, **kw: object())
 
     def _fake_tailor(llm: Any, **kwargs: Any) -> Any:
@@ -493,24 +532,49 @@ def test_email_endpoint_drafts_after_tailor(
     tailor_resp = client.post("/api/jobs/a1/tailor", json={"no_pdf": True})
     _wait_for_task(client, tailor_resp.json()["task_id"])
 
-    monkeypatch.setattr(
-        srv,
-        "draft_application_email",
-        lambda llm, **kw: EmailDraft(
+    seen: dict[str, Any] = {}
+
+    def _fake_drafter(llm: Any, **kw: Any) -> EmailDraft:
+        seen.update(kw)
+        return EmailDraft(
             to=kw["recipient_email"],
             subject="Application — ML Engineer",
             body="Hi! Attached is my resume.",
-        ),
-    )
+        )
 
+    monkeypatch.setattr(srv, "draft_application_email", _fake_drafter)
     resp = client.post(
         "/api/jobs/a1/email", json={"recipient": "rec@example.com"}
     )
     assert resp.status_code == 200, resp.text
     final = _wait_for_task(client, resp.json()["task_id"])
     assert final["status"] == "succeeded", final
-    assert final["result"]["to"] == "rec@example.com"
     assert "ML Engineer" in final["result"]["subject"]
+    assert seen["resume"] is not None
+    assert seen["cover"] is not None
+
+
+def test_email_endpoint_returns_400_when_jd_and_artifacts_missing(
+    app_factory: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a job has neither a tailored resume nor a JD body the
+    endpoint should refuse, with a hint pointing at tailor /
+    freeform."""
+    client, *_ = app_factory()
+    from jobapply import server as srv
+
+    empty = _stub_raw("e1")
+    empty.description = ""
+    monkeypatch.setattr(srv, "iter_search_jobs", lambda inp: iter([empty]))
+    seed = client.post("/api/search", json={"titles": ["X"]}).json()
+    _wait_for_task(client, seed["task_id"])
+
+    resp = client.post(
+        "/api/jobs/e1/email", json={"recipient": "rec@example.com"}
+    )
+    assert resp.status_code == 400
+    assert "description" in resp.json()["detail"].lower()
 
 
 def test_delete_job_removes_from_catalog(

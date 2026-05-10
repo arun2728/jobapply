@@ -1027,12 +1027,20 @@ def _register_routes(app: FastAPI) -> None:
         record = ws.get(job_id)
         if record is None:
             raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}")
-        if record.tailored_resume is None or record.cover_letter is None:
+        # Either tailored artifacts OR a non-empty JD body is enough
+        # for the drafter to produce a grounded email. We bail only
+        # when both are missing so we don't ask the model to make up
+        # the role from thin air.
+        has_artifacts = (
+            record.tailored_resume is not None and record.cover_letter is not None
+        )
+        if not has_artifacts and not (record.description or "").strip():
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "This job has no tailored resume / cover letter yet — "
-                    "tailor it first."
+                    "This job has neither a tailored resume nor a job "
+                    "description on file. Tailor it first or paste a JD "
+                    "via the Freeform route."
                 ),
             )
         prov, mdl = _resolve_provider_model(
@@ -1044,17 +1052,18 @@ def _register_routes(app: FastAPI) -> None:
             handle.set_label("Drafting email…")
             handle.set_percent(20.0)
             llm = create_chat_model(prov, mdl, cfg=cfg)
+            sender = ""
+            if record.tailored_resume is not None:
+                sender = record.tailored_resume.document_title or ""
             email = draft_application_email(
                 llm,
                 profile_text=profile_text,
                 job=_record_to_raw_job(record),
-                resume=record.tailored_resume,  # type: ignore[arg-type]
-                cover=record.cover_letter,  # type: ignore[arg-type]
+                resume=record.tailored_resume,
+                cover=record.cover_letter,
                 recipient_email=payload.recipient.strip(),
                 additional_info=payload.additional_info,
-                sender_name=record.tailored_resume.document_title  # type: ignore[union-attr]
-                if record.tailored_resume
-                else "",
+                sender_name=sender,
             )
             job_dir = _resolve_job_dir(ws, record)
             job_dir.mkdir(parents=True, exist_ok=True)

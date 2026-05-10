@@ -185,11 +185,10 @@ export default function JobDetail() {
           <button
             className="btn-secondary"
             onClick={() => setEmailOpen(true)}
-            disabled={!isTailored}
             title={
               isTailored
-                ? "Draft a recruiter email"
-                : "Tailor first to enable the email drafter."
+                ? "Draft a recruiter email referencing your tailored resume."
+                : "Draft a short recruiter email from the JD + your profile (no attachments mentioned)."
             }
           >
             <Mail size={14} /> Draft email
@@ -308,6 +307,7 @@ export default function JobDetail() {
           open={emailOpen}
           onClose={() => setEmailOpen(false)}
           defaultRecipient={j.application?.primary_email ?? ""}
+          isTailored={isTailored}
         />
       ) : null}
       <TailorModal

@@ -3,6 +3,9 @@ import { Filter, Loader2, PenSquare, Wand2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import SearchForm from "@/components/SearchForm";
 import JobCard from "@/components/JobCard";
+import TailorModal, {
+  type TailorOptions,
+} from "@/components/TailorModal";
 import TaskProgress from "@/components/TaskProgress";
 import {
   useJobs,
@@ -28,6 +31,7 @@ export default function Dashboard() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [searchTask, setSearchTask] = useState<TaskRecord | null>(null);
   const [runTask, setRunTask] = useState<TaskRecord | null>(null);
+  const [tailorOpen, setTailorOpen] = useState(false);
   const startRun = useStartRun();
 
   const filtered: JobRecord[] = useMemo(() => {
@@ -62,16 +66,21 @@ export default function Dashboard() {
     });
   };
 
-  const onTailorSelected = async () => {
+  const onConfirmTailor = async (opts: TailorOptions) => {
     if (selected.size === 0) return;
     try {
       const t = await startRun.mutateAsync({
         job_ids: Array.from(selected),
+        provider: opts.provider,
+        model: opts.model,
+        no_pdf: opts.no_pdf,
+        force: opts.force,
       });
       setRunTask(t);
       setSelected(new Set());
+      setTailorOpen(false);
     } catch {
-      // shown via mutation state
+      // mutation state stays visible in the modal
     }
   };
 
@@ -147,7 +156,7 @@ export default function Dashboard() {
           <button
             className="btn-primary"
             disabled={selected.size === 0 || startRun.isPending}
-            onClick={onTailorSelected}
+            onClick={() => setTailorOpen(true)}
           >
             {startRun.isPending ? (
               <Loader2 size={14} className="animate-spin" />
@@ -186,6 +195,14 @@ export default function Dashboard() {
           ))}
         </div>
       )}
+
+      <TailorModal
+        open={tailorOpen}
+        onClose={() => setTailorOpen(false)}
+        onConfirm={onConfirmTailor}
+        pending={startRun.isPending}
+        jobCount={selected.size}
+      />
     </div>
   );
 }

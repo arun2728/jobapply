@@ -13,6 +13,10 @@ interface Props {
   open: boolean;
   onClose: () => void;
   defaultRecipient?: string;
+  /** ``true`` when the job already has a tailored resume + cover
+   *  letter on disk. We surface this in the header so users know
+   *  whether the draft will reference attachments or not. */
+  isTailored?: boolean;
 }
 
 /** Modal that drafts and shows the application email. The recipient
@@ -28,6 +32,7 @@ export default function EmailModal({
   open,
   onClose,
   defaultRecipient,
+  isTailored,
 }: Props) {
   const hint = useEmailHint(open ? jobId : undefined);
   const providers = useProviders();
@@ -94,6 +99,18 @@ export default function EmailModal({
 
         {!draft ? (
           <form onSubmit={onSubmit} className="space-y-4">
+            <div
+              className={
+                "rounded-md border px-3 py-2 text-xs " +
+                (isTailored
+                  ? "border-brand-700/40 bg-brand-900/10 text-brand-200"
+                  : "border-amber-700/40 bg-amber-900/10 text-amber-200")
+              }
+            >
+              {isTailored
+                ? "Tailored resume + cover letter detected — the draft will reference them as attachments."
+                : "No tailored resume yet — the draft will be grounded in the JD + your profile and won't claim attachments. Tailor first if you want a polished email referencing your tailored docs."}
+            </div>
             <label className="block">
               <span className="label">Recipient email</span>
               <input

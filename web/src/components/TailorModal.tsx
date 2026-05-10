@@ -6,6 +6,10 @@ export interface TailorOptions {
   provider: string;
   model: string;
   no_pdf: boolean;
+  /** Only meaningful when ``showForce`` is true (batch mode); the
+   *  parent forwards this to the run endpoint to re-tailor jobs
+   *  already in ``done`` status. */
+  force: boolean;
 }
 
 interface Props {
@@ -18,7 +22,14 @@ interface Props {
   /** Optional copy override — e.g. "Re-tailor" when the job has
    *  already been processed once. */
   title?: string;
+  /** Single-job mode: shown above the form so users can confirm
+   *  they're tailoring the right role. */
   jobTitle?: string;
+  /** Batch mode: number of selected jobs. Mutually exclusive with
+   *  ``jobTitle``. Toggles the "Force re-tailor" checkbox so users
+   *  can override the run endpoint's default skip-already-done
+   *  behaviour. */
+  jobCount?: number;
 }
 
 /** Confirmation modal shown when the user clicks "Tailor resume +
@@ -34,11 +45,14 @@ export default function TailorModal({
   pending,
   title,
   jobTitle,
+  jobCount,
 }: Props) {
   const providers = useProviders();
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [noPdf, setNoPdf] = useState(false);
+  const [force, setForce] = useState(false);
+  const isBatch = typeof jobCount === "number";
 
   // Hydrate the form from /api/providers once it lands. We re-run
   // this whenever the modal re-opens so a state change between
@@ -60,6 +74,7 @@ export default function TailorModal({
       provider: provider.trim(),
       model: model.trim(),
       no_pdf: noPdf,
+      force,
     });
   };
 
@@ -73,7 +88,10 @@ export default function TailorModal({
       >
         <div className="flex items-center gap-2 text-base font-semibold text-slate-100">
           <Wand2 size={18} className="text-brand-400" />
-          {title ?? "Tailor resume + cover letter"}
+          {title ??
+            (isBatch
+              ? "Tailor selected jobs"
+              : "Tailor resume + cover letter")}
           <button
             type="button"
             className="ml-auto text-slate-400 hover:text-slate-100"
@@ -84,7 +102,16 @@ export default function TailorModal({
             <X size={18} />
           </button>
         </div>
-        {jobTitle ? (
+        {isBatch ? (
+          <p className="text-sm text-slate-400">
+            About to tailor{" "}
+            <span className="font-medium text-slate-200">
+              {jobCount} {jobCount === 1 ? "job" : "jobs"}
+            </span>{" "}
+            in sequence. Each one will run resume + cover-letter agents
+            against your <code className="font-mono">profile.json</code>.
+          </p>
+        ) : jobTitle ? (
           <p className="text-sm text-slate-400">
             Tailoring for{" "}
             <span className="font-medium text-slate-200">{jobTitle}</span>.
@@ -150,16 +177,30 @@ export default function TailorModal({
           )}
         </label>
 
-        <label className="flex items-center gap-2 text-sm text-slate-300">
-          <input
-            type="checkbox"
-            className="accent-brand-500"
-            checked={noPdf}
-            onChange={(e) => setNoPdf(e.target.checked)}
-            disabled={pending}
-          />
-          Skip PDF rendering (markdown + LaTeX only — faster)
-        </label>
+        <div className="space-y-2">
+          <label className="flex items-center gap-2 text-sm text-slate-300">
+            <input
+              type="checkbox"
+              className="accent-brand-500"
+              checked={noPdf}
+              onChange={(e) => setNoPdf(e.target.checked)}
+              disabled={pending}
+            />
+            Skip PDF rendering (markdown + LaTeX only — faster)
+          </label>
+          {isBatch ? (
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <input
+                type="checkbox"
+                className="accent-brand-500"
+                checked={force}
+                onChange={(e) => setForce(e.target.checked)}
+                disabled={pending}
+              />
+              Force re-tailor even if already done
+            </label>
+          ) : null}
+        </div>
 
         <div className="flex justify-end gap-2 pt-1">
           <button
