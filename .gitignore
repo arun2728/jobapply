@@ -29,6 +29,14 @@ cover_letter-test.*
 *-test.pdf
 *-test.tex
 
+# --- Web frontend ---
+web/node_modules/
+web/.vite/
+web/dist/
+# Vite outputs the prod bundle here; commit only when you've cut a release
+# (`cd web && npm run build`). Local dev should rely on `npm run dev`.
+jobapply/web_dist/
+
 # --- OS / editor ---
 .DS_Store
 .idea/

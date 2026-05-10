@@ -768,6 +768,101 @@ def config_cmd(
     _persist_config(cfg, cfg_path)
 
 
+@app.command("ui")
+def ui_cmd(
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        help="Host interface to bind. Use 0.0.0.0 to expose on the LAN.",
+    ),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to listen on."),
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        "-w",
+        help=(
+            "Workspace directory the UI reads/writes from. Defaults to "
+            "`output/web` under the current directory."
+        ),
+    ),
+    reload: bool = typer.Option(
+        False,
+        "--reload",
+        help="Enable uvicorn auto-reload (developer use).",
+    ),
+    open_browser: bool = typer.Option(
+        True,
+        "--open/--no-open",
+        help="Open the UI in your default browser once the server is ready.",
+    ),
+) -> None:
+    """Start the JobApply web UI (FastAPI + React) on this machine.
+
+    The bundled React frontend is served from
+    ``jobapply/web_dist/`` if it has been built. Run ``cd web && npm
+    run build`` once to produce the bundle (you only need a node
+    toolchain to build, not to use, the UI).
+
+    For frontend development, run the Vite dev server separately:
+    ``cd web && npm run dev`` — it proxies ``/api`` calls to the
+    FastAPI server you've started here.
+    """
+    import os
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from jobapply.server import WEB_DIST_DIRNAME, create_app
+
+    cwd = Path.cwd()
+    ws_path: Path | None = None
+    if workspace:
+        ws_path = Path(workspace).expanduser()
+        if not ws_path.is_absolute():
+            ws_path = cwd / ws_path
+
+    app_obj = create_app(cwd=cwd, workspace_path=ws_path)
+    dist = Path(__file__).parent / WEB_DIST_DIRNAME
+    bundle_present = (dist / "index.html").is_file()
+    if not bundle_present:
+        console.print(
+            "[yellow]No frontend bundle found at "
+            f"{dist}.[/yellow]\n"
+            "[dim]Run [bold]cd web && npm install && npm run build[/bold] to "
+            "build it, or run [bold]npm run dev[/bold] for live-reload "
+            "development on http://localhost:5173.[/dim]"
+        )
+
+    url = f"http://{host}:{port}"
+    console.print(
+        f"[bold green]JobApply UI[/bold green] → {url}\n"
+        f"[dim]API docs: {url}/docs[/dim]"
+    )
+
+    if open_browser and bundle_present and not os.environ.get("JOBAPPLY_NO_OPEN"):
+        # Defer the browser launch until the server is actually
+        # listening; otherwise the browser hits a connection refused.
+        def _open_later() -> None:
+            import time
+
+            time.sleep(1.2)
+            try:
+                webbrowser.open(url)
+            except Exception:  # noqa: BLE001
+                pass
+
+        threading.Thread(target=_open_later, daemon=True).start()
+
+    uvicorn.run(
+        app_obj,
+        host=host,
+        port=port,
+        reload=reload,
+        log_level="info",
+    )
+
+
 @app.command("workspace")
 def workspace_cmd(
     workspace_path: str = typer.Argument(

@@ -22,6 +22,7 @@
   <a href="#why-jobapply">Why</a> •
   <a href="#how-it-works">How it works</a> •
   <a href="#commands">Commands</a> •
+  <a href="#web-ui">Web UI</a> •
   <a href="#configuration">Config</a> •
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
@@ -357,6 +358,7 @@ After every run, `jobapply` writes `output/run-<id>/jobs.csv` with one row per j
 | `jobapply tailor` | Tailor your resume + cover letter for **one** JD file (skip search). Accepts the same `--provider` / `--model` overrides as `run`. Optional `--with-email` drafts a ready-to-paste application email. See below. |
 | `jobapply resume <run-name>` | Continue from `meta.json` (default: reset checkpoint) |
 | `jobapply workspace <path>` | Inspect a centralized workspace: catalog size + recent search/run history. See [Centralized workspaces](#centralized-workspaces). |
+| `jobapply ui` | Launch the **Web UI** (FastAPI + React) on `http://127.0.0.1:8000`. See [Web UI](#web-ui). |
 | `jobapply list` | List `output/run-*` folders |
 
 ### Centralized workspaces
@@ -418,6 +420,60 @@ which is handy if you've been hand-editing the JSON and want to reset.
 `jobapply workspace <path>` prints the catalog size and recent search /
 run history so you can answer "what did I do yesterday?" without
 diff-ing folders. Add `--limit N` to see deeper history.
+
+### Web UI
+
+`jobapply ui` launches a local web app for the impatient and the
+visually-inclined: search for jobs, browse the catalog, click into a
+role to see the JD + fit rationale, tailor your resume + cover letter
+on demand, draft a recruiter email, or paste an arbitrary JD into the
+**Paste JD** route to add a custom-tailored entry. Everything lives
+in the same workspace catalog (default: `output/web/`) used by the
+CLI, so the two interfaces share state — searches you ran from the
+terminal show up in the UI, and tailored resumes generated from the
+UI are visible to `jobapply workspace <path>`.
+
+**Stack:** FastAPI backend (reuses every existing agent / pipeline /
+workspace primitive — zero duplication) + React + Vite + TypeScript +
+Tailwind frontend. Long-running operations run as background tasks
+that the UI polls for live progress.
+
+```bash
+# Start the UI (pre-built bundle ships with the package).
+jobapply ui
+# → JobApply UI → http://127.0.0.1:8000  (browser opens automatically)
+
+# Bind to the LAN, custom port, custom workspace.
+jobapply ui --host 0.0.0.0 --port 8123 --workspace ~/jobs/2026-q2
+```
+
+**Routes**
+
+| Route | What you do there |
+|-------|-------------------|
+| **Jobs** (`/`) | Live JobSpy search form, filterable catalog, multi-select + batch "Tailor selected" button. |
+| **Job detail** (`/jobs/<id>`) | JD, fit score + rationale, on-demand tailor, artifact downloads (PDF / LaTeX / Markdown), email-drafting modal that auto-fills the recipient parsed from the JD body. |
+| **Paste JD** (`/freeform`) | Drop in any job description; we tailor a resume + cover letter and add it to the workspace catalog. |
+| **History** (`/searches`) | Every `search` / `run` invocation against this workspace, with fetched / new / duplicate counts. |
+
+**Frontend development**
+
+The pre-built bundle (`jobapply/web_dist/`) is served by the FastAPI
+server out of the box, so end users never need a node toolchain. To
+hack on the UI:
+
+```bash
+# Backend (terminal 1)
+jobapply ui --no-open --port 8000
+
+# Frontend dev server with HMR (terminal 2)
+cd web
+npm install
+npm run dev      # http://localhost:5173 — proxies /api → :8000
+```
+
+When you're ready to ship a UI change, run `cd web && npm run build`
+to rebuild the bundle into `jobapply/web_dist/`.
 
 ### Fetch-only search
 
