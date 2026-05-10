@@ -128,6 +128,20 @@ export interface ServerStatus {
   web_dist_present: boolean;
 }
 
+export interface ProviderInfo {
+  name: string;
+  configured: boolean;
+  has_credentials: boolean;
+  default_model: string;
+  fallback_model: string;
+}
+
+export interface ProvidersResponse {
+  active_provider: string;
+  active_model: string;
+  providers: ProviderInfo[];
+}
+
 export interface SearchHistoryRow {
   id: number;
   command: string;

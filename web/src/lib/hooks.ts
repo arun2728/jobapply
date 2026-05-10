@@ -9,6 +9,7 @@ import { api } from "./api";
 import type {
   JobRecord,
   JobsListResponse,
+  ProvidersResponse,
   ServerStatus,
   TaskRecord,
 } from "./types";
@@ -18,6 +19,7 @@ import type {
 // invalidates anything starting with the prefix.)
 export const queryKeys = {
   status: ["status"] as const,
+  providers: ["providers"] as const,
   jobs: ["jobs"] as const,
   job: (id: string) => ["jobs", id] as const,
   searches: ["searches"] as const,
@@ -28,6 +30,17 @@ export function useStatus(opts?: Partial<UseQueryOptions<ServerStatus>>) {
   return useQuery({
     queryKey: queryKeys.status,
     queryFn: api.status,
+    ...opts,
+  });
+}
+
+export function useProviders(
+  opts?: Partial<UseQueryOptions<ProvidersResponse>>,
+) {
+  return useQuery({
+    queryKey: queryKeys.providers,
+    queryFn: api.providers,
+    staleTime: 60_000,
     ...opts,
   });
 }

@@ -26,6 +26,9 @@ import {
 } from "@/lib/format";
 import EmailModal from "@/components/EmailModal";
 import Markdown from "@/components/Markdown";
+import TailorModal, {
+  type TailorOptions,
+} from "@/components/TailorModal";
 import TaskProgress from "@/components/TaskProgress";
 import { api } from "@/lib/api";
 
@@ -50,6 +53,7 @@ export default function JobDetail() {
   const [tailorTaskId, setTailorTaskId] = useState<string | null>(null);
   const tailorTask = useTaskPoll(tailorTaskId);
   const [emailOpen, setEmailOpen] = useState(false);
+  const [tailorOpen, setTailorOpen] = useState(false);
 
   if (!jobId) return null;
   if (job.isLoading) {
@@ -80,12 +84,17 @@ export default function JobDetail() {
   const isTailored = j.status === "done" || !!j.tailored_resume;
   const available = j.available_artifacts ?? {};
 
-  const onTailor = async () => {
+  const onConfirmTailor = async (opts: TailorOptions) => {
     try {
-      const t = await tailor.mutateAsync({});
+      const t = await tailor.mutateAsync({
+        provider: opts.provider,
+        model: opts.model,
+        no_pdf: opts.no_pdf,
+      });
       setTailorTaskId(t.task_id);
+      setTailorOpen(false);
     } catch {
-      // shown via mutation state below
+      // mutation error stays visible in the modal via the spinner state
     }
   };
 
@@ -160,13 +169,13 @@ export default function JobDetail() {
             {j.fit.missing_keywords.join(", ")}
           </p>
         ) : null}
-        <div className="flex flex-wrap gap-2 pt-1">
+        <div className="flex flex-wrap items-center gap-2 pt-1">
           <button
             className="btn-primary"
-            onClick={onTailor}
-            disabled={tailor.isPending || tailorTask.task?.status === "running"}
+            onClick={() => setTailorOpen(true)}
+            disabled={tailorTask.task?.status === "running"}
           >
-            {tailor.isPending || tailorTask.task?.status === "running" ? (
+            {tailorTask.task?.status === "running" ? (
               <Loader2 size={14} className="animate-spin" />
             ) : (
               <Wand2 size={14} />
@@ -301,6 +310,14 @@ export default function JobDetail() {
           defaultRecipient={j.application?.primary_email ?? ""}
         />
       ) : null}
+      <TailorModal
+        open={tailorOpen}
+        onClose={() => setTailorOpen(false)}
+        onConfirm={onConfirmTailor}
+        pending={tailor.isPending}
+        title={isTailored ? "Re-tailor resume + cover letter" : undefined}
+        jobTitle={j.title || j.company || j.job_id}
+      />
     </div>
   );
 }

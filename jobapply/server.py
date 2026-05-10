@@ -31,8 +31,11 @@ from jobapply.agents.email_drafter import draft_application_email
 from jobapply.agents.fit_scorer import score_fit
 from jobapply.agents.search import iter_search_jobs
 from jobapply.config import (
+    DEFAULT_MODELS,
+    PROVIDER_NAMES,
     AppConfig,
     apply_latex_api_env,
+    get_api_key,
     load_config,
     load_dotenv_if_present,
 )
@@ -509,6 +512,47 @@ def _register_routes(app: FastAPI) -> None:
             "loaded": True,
             "path": str(path),
             "profile": profile_obj.model_dump(mode="json"),
+        }
+
+    @app.get("/api/providers")
+    def providers(request: Request) -> dict[str, Any]:
+        """List every provider known to the CLI plus the user's configured
+        defaults. The frontend uses this to populate the provider/model
+        picker on the tailor + email actions, pre-selecting whatever is
+        active in ``jobapply.toml``.
+
+        Each entry includes:
+
+        * ``name`` – canonical provider key.
+        * ``configured`` – ``True`` when ``jobapply.toml`` has a
+          ``[providers.<name>]`` block (i.e. ``jobapply config`` ran for it).
+        * ``has_credentials`` – ``True`` when an API key is reachable
+          (toml first, env vars second). Lets the UI grey out providers
+          the user can't actually use yet.
+        * ``default_model`` – the user's per-provider model override
+          when present, else the bundled :data:`DEFAULT_MODELS` value.
+        """
+        ctx: ServerContext = request.app.state.ctx
+        cfg = ctx.cfg
+        items: list[dict[str, Any]] = []
+        for name in PROVIDER_NAMES:
+            pcfg = cfg.provider_config(name)
+            items.append(
+                {
+                    "name": name,
+                    "configured": name in cfg.providers,
+                    "has_credentials": (
+                        name == "ollama" or bool(get_api_key(cfg, name))
+                    ),
+                    "default_model": pcfg.model
+                    or DEFAULT_MODELS.get(name, ""),
+                    "fallback_model": DEFAULT_MODELS.get(name, ""),
+                }
+            )
+        return {
+            "active_provider": cfg.provider,
+            "active_model": cfg.resolved_model(cfg.provider),
+            "providers": items,
         }
 
     @app.get("/api/jobs")

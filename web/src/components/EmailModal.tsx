@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { Loader2, Mail, X } from "lucide-react";
-import { useStartEmail, useEmailHint, useTaskPoll } from "@/lib/hooks";
+import {
+  useEmailHint,
+  useProviders,
+  useStartEmail,
+  useTaskPoll,
+} from "@/lib/hooks";
 import type { EmailDraft } from "@/lib/types";
 
 interface Props {
@@ -12,7 +17,12 @@ interface Props {
 
 /** Modal that drafts and shows the application email. The recipient
  *  defaults to whatever the JD-extractor parsed out of the JD body
- *  (so direct-recruiter postings don't require user input). */
+ *  (so direct-recruiter postings don't require user input).
+ *
+ *  The provider + model fields are pre-filled from the active
+ *  ``jobapply.toml`` defaults but always visible — same UX as the
+ *  tailor confirmation modal — so users notice which LLM is about
+ *  to spend their tokens. */
 export default function EmailModal({
   jobId,
   open,
@@ -20,8 +30,11 @@ export default function EmailModal({
   defaultRecipient,
 }: Props) {
   const hint = useEmailHint(open ? jobId : undefined);
+  const providers = useProviders();
   const [recipient, setRecipient] = useState(defaultRecipient ?? "");
   const [context, setContext] = useState("");
+  const [provider, setProvider] = useState("");
+  const [model, setModel] = useState("");
   const [taskId, setTaskId] = useState<string | null>(null);
   const start = useStartEmail(jobId);
   const { task } = useTaskPoll(taskId);
@@ -35,16 +48,28 @@ export default function EmailModal({
     }
   }, [open, hint.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Hydrate provider/model from the active toml whenever the modal
+  // opens (or the providers payload arrives). We rerun this on
+  // every open so a config change between drafts is reflected.
+  useEffect(() => {
+    if (!open || !providers.data) return;
+    setProvider(providers.data.active_provider);
+    setModel(providers.data.active_model);
+  }, [open, providers.data]);
+
   if (!open) return null;
   const draft = task?.result as EmailDraft | undefined;
+  const meta = providers.data?.providers.find((p) => p.name === provider);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!recipient.trim()) return;
+    if (!recipient.trim() || !provider.trim() || !model.trim()) return;
     try {
       const t = await start.mutateAsync({
         recipient: recipient.trim(),
         additional_info: context.trim(),
+        provider: provider.trim(),
+        model: model.trim(),
       });
       setTaskId(t.task_id);
     } catch {
@@ -105,6 +130,68 @@ export default function EmailModal({
                 </p>
               ) : null}
             </label>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="label">Provider</span>
+                <select
+                  className="input"
+                  value={provider}
+                  disabled={
+                    providers.isLoading ||
+                    start.isPending ||
+                    task?.status === "running"
+                  }
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setProvider(next);
+                    const m = providers.data?.providers.find(
+                      (p) => p.name === next,
+                    );
+                    if (m) setModel(m.default_model);
+                  }}
+                >
+                  {providers.data?.providers.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name}
+                      {p.configured ? "" : " (not configured)"}
+                      {p.has_credentials ? "" : " — no credentials"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="label">Model</span>
+                <input
+                  className="input font-mono text-sm"
+                  value={model}
+                  placeholder={meta?.fallback_model}
+                  onChange={(e) => setModel(e.target.value)}
+                  disabled={start.isPending || task?.status === "running"}
+                  required
+                />
+              </label>
+            </div>
+            {meta && !meta.has_credentials ? (
+              <p className="-mt-1 text-xs text-amber-300">
+                No API key found for {provider}. The request will fail
+                unless you set one via{" "}
+                <code className="font-mono">jobapply config</code> or an
+                env var.
+              </p>
+            ) : meta && model !== meta.default_model ? (
+              <p className="-mt-1 text-xs text-slate-400">
+                Override — your{" "}
+                <code className="font-mono">jobapply.toml</code> default
+                for <span className="font-mono">{provider}</span> is{" "}
+                <span className="font-mono">{meta.default_model}</span>.
+              </p>
+            ) : (
+              <p className="-mt-1 text-xs text-slate-500">
+                Defaults loaded from{" "}
+                <code className="font-mono">jobapply.toml</code>. Change
+                them for this draft only.
+              </p>
+            )}
             {task && task.status !== "succeeded" ? (
               <div className="flex items-center gap-2 text-sm text-slate-300">
                 <Loader2 size={14} className="animate-spin text-brand-400" />
@@ -132,7 +219,13 @@ export default function EmailModal({
               <button
                 type="submit"
                 className="btn-primary"
-                disabled={start.isPending || task?.status === "running"}
+                disabled={
+                  start.isPending ||
+                  task?.status === "running" ||
+                  providers.isLoading ||
+                  !provider.trim() ||
+                  !model.trim()
+                }
               >
                 {start.isPending || task?.status === "running" ? (
                   <Loader2 size={16} className="animate-spin" />

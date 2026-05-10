@@ -176,6 +176,30 @@ def test_status_reports_workspace_and_profile(app_factory: Any) -> None:
     assert body["provider"] == "openai"
 
 
+def test_providers_endpoint_lists_known_providers(app_factory: Any) -> None:
+    """``/api/providers`` should expose every supported provider plus
+    flags for the picker UI (``configured`` and ``has_credentials``).
+    The test toml only has an ``openai`` block, so other providers
+    must come back as ``configured=False`` while still appearing in
+    the list."""
+    client, *_ = app_factory()
+    body = client.get("/api/providers").json()
+    assert body["active_provider"] == "openai"
+    assert body["active_model"] == "test-model"
+    names = {p["name"] for p in body["providers"]}
+    # Every canonical provider in PROVIDER_NAMES must be reachable
+    # so the dropdown is consistent across installs.
+    assert {"openai", "gemini", "anthropic", "ollama"}.issubset(names)
+    openai = next(p for p in body["providers"] if p["name"] == "openai")
+    assert openai["configured"] is True
+    assert openai["has_credentials"] is True
+    assert openai["default_model"] == "test-model"
+    gemini = next(p for p in body["providers"] if p["name"] == "gemini")
+    assert gemini["configured"] is False
+    # gemini default model comes from DEFAULT_MODELS rather than the toml
+    assert gemini["default_model"]
+
+
 def test_jobs_list_starts_empty(app_factory: Any) -> None:
     client, *_ = app_factory()
     resp = client.get("/api/jobs")

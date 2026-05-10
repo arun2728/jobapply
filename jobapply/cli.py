@@ -816,6 +816,54 @@ def ui_cmd(
     from jobapply.server import WEB_DIST_DIRNAME, create_app
 
     cwd = Path.cwd()
+
+    # The UI exposes search/run/tailor — all of which need a configured
+    # provider + an imported profile.json. Bail early with a friendly
+    # pointer to `jobapply init` so users don't get confusing errors
+    # from inside the SPA later. We accept either `jobapply.toml` or
+    # `.jobapply.toml` to mirror `find_config_path`'s lookup order.
+    toml_path = cwd / "jobapply.toml"
+    dot_toml_path = cwd / ".jobapply.toml"
+    if not toml_path.is_file() and not dot_toml_path.is_file():
+        console.print(
+            "[red]No jobapply.toml found in[/red] "
+            f"[bold]{cwd}[/bold]\n"
+            "[dim]The web UI needs a configured provider + profile before "
+            "it can search or tailor jobs.[/dim]\n\n"
+            "[bold]Run this first:[/bold]\n"
+            "  [cyan]jobapply init --resume <path/to/your/resume>[/cyan]\n\n"
+            "[dim]The init command imports your resume into "
+            "profile.json, configures an LLM provider, and writes "
+            "jobapply.toml. Once it finishes, re-run "
+            "`jobapply ui`.[/dim]"
+        )
+        raise typer.Exit(1)
+
+    # profile.json is created by `jobapply init` alongside the toml,
+    # so a missing profile typically means the user hand-wrote a
+    # jobapply.toml without going through init. Surface the same hint
+    # rather than letting every API request 400 with the same error.
+    profile_rel = "profile.json"
+    try:
+        cfg_peek = load_config(cwd)
+        profile_rel = cfg_peek.profile_path or profile_rel
+    except Exception:  # noqa: BLE001 - defer detailed errors to create_app
+        pass
+    profile_full = (cwd / profile_rel).expanduser()
+    if not profile_full.is_absolute():
+        profile_full = cwd / profile_rel
+    if not profile_full.is_file():
+        console.print(
+            "[red]profile.json was not found at[/red] "
+            f"[bold]{profile_full}[/bold]\n"
+            "[dim]Your jobapply.toml exists but the resume hasn't been "
+            "imported yet.[/dim]\n\n"
+            "[bold]Run this first:[/bold]\n"
+            "  [cyan]jobapply init --resume <path/to/your/resume>[/cyan]\n\n"
+            "[dim](Or `jobapply init --paste` to paste the text directly.)[/dim]"
+        )
+        raise typer.Exit(1)
+
     ws_path: Path | None = None
     if workspace:
         ws_path = Path(workspace).expanduser()

@@ -3,6 +3,7 @@ import type {
   EmailHint,
   JobRecord,
   JobsListResponse,
+  ProvidersResponse,
   SearchHistoryRow,
   ServerStatus,
   TaskRecord,
@@ -57,6 +58,7 @@ async function request<T>(
 
 export const api = {
   status: () => request<ServerStatus>("/api/status"),
+  providers: () => request<ProvidersResponse>("/api/providers"),
   jobs: () => request<JobsListResponse>("/api/jobs"),
   job: (jobId: string) => request<JobRecord>(`/api/jobs/${jobId}`),
   deleteJob: (jobId: string) =>
