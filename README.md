@@ -473,21 +473,21 @@ Output layout (mirrors `jobapply run`'s per-job folder so the same PDF backends 
 output/tailor-<timestamp>/<slug>/
 ├── resume.md
 ├── resume.tex
-├── resume.pdf              # markdown -> PDF (pandoc / weasyprint / fpdf2)
-├── resume-latex.pdf        # styled LaTeX template (latex-on-http / tectonic / pdflatex)
+├── resume.pdf              # styled LaTeX template if available, falls back to markdown PDF
 ├── cover_letter.md
 ├── cover_letter.tex
-├── cover_letter.pdf
-├── cover_letter-latex.pdf
+├── cover_letter.pdf        # styled LaTeX template if available, falls back to markdown PDF
 ├── tailor_meta.json        # JD source + parsed title/company/location
 └── email.txt               # only when --with-email; To / Subject / body, ready to paste
 ```
+
+> **PDF backend precedence.** Both pipelines write to the same `resume.pdf` / `cover_letter.pdf`: the Markdown→PDF backend (pandoc / weasyprint / fpdf2) runs first, and if the LaTeX→PDF backend (latex-on-http / tectonic / pdflatex) succeeds it overwrites the file with the styled MTeck-themed render. If you want only the Markdown render, disable the LaTeX backend with `JOBAPPLY_LATEX_API_DISABLE=1` (and keep `tectonic` / `pdflatex` off `$PATH`).
 
 ## Architecture
 
 - **LangGraph** `StateGraph`: `search` → `dedupe` → `process_one` (loop until queue empty)
 - **SqliteSaver** checkpoint: `output/<run>/checkpoint.sqlite`
-- **Agents**: fit scorer, resume tailor, cover letter, optional networking — all `with_structured_output(Pydantic)`
+- **Agents**: JD parser, fit scorer, resume tailor, cover letter, application-email drafter, optional networking — all `with_structured_output(Pydantic)`
 - **Inspiration**: multi-agent patterns from community writeups; production guardrails = structured outputs + ledger + atomic JSON writes
 
 ## Roadmap
