@@ -143,8 +143,14 @@ function Editor({ jobId, name, job }: EditorProps) {
 
   const tabName = TABS.find((t) => t.name === name)?.label ?? name;
 
+  // The whole editor page is locked to the viewport so the source
+  // editor and the PDF preview each scroll *inside* their card. The
+  // 230px subtracted accounts for the layout chrome (header + footer
+  // + main padding) plus the editor's own breadcrumb / tab rows. We
+  // keep a generous floor so very short viewports still get a usable
+  // editor area.
   return (
-    <div className="space-y-4">
+    <div className="flex h-[calc(100vh-230px)] min-h-[520px] flex-col gap-3 overflow-hidden">
       <div className="flex flex-wrap items-center gap-2">
         <Link to={`/jobs/${jobId}`} className="btn-ghost">
           <ArrowLeft size={14} /> Back to job
@@ -184,9 +190,9 @@ function Editor({ jobId, name, job }: EditorProps) {
         ))}
       </nav>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="card flex min-h-[60vh] flex-col p-0">
-          <div className="flex items-center gap-2 border-b border-slate-800 px-3 py-2">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="card flex min-h-0 flex-col overflow-hidden p-0">
+          <div className="flex flex-shrink-0 items-center gap-2 border-b border-slate-800 px-3 py-2">
             <Hammer size={14} className="text-slate-400" />
             <span className="text-xs uppercase tracking-wide text-slate-400">
               Source
@@ -238,13 +244,18 @@ function Editor({ jobId, name, job }: EditorProps) {
               {String((text.error as Error)?.message ?? "Failed to load")}
             </div>
           ) : (
-            <div className="flex-1 overflow-hidden">
+            // ``min-h-0`` is the magic that lets ``flex-1`` actually
+            // shrink past the editor's natural content height; without
+            // it CodeMirror would size to its content and push the
+            // outer page into a scrollbar. With it, CodeMirror sits in
+            // a bounded box and provides its own internal scroll.
+            <div className="min-h-0 flex-1">
               <CodeMirror
                 value={draft}
                 onChange={(v) => setDraft(v)}
                 theme="dark"
                 height="100%"
-                style={{ height: "100%", minHeight: "60vh" }}
+                style={{ height: "100%" }}
                 extensions={extensions}
                 basicSetup={{
                   lineNumbers: true,
@@ -267,8 +278,8 @@ function Editor({ jobId, name, job }: EditorProps) {
           />
         </div>
 
-        <div className="card flex min-h-[60vh] flex-col p-0">
-          <div className="flex items-center gap-2 border-b border-slate-800 px-3 py-2">
+        <div className="card flex min-h-0 flex-col overflow-hidden p-0">
+          <div className="flex flex-shrink-0 items-center gap-2 border-b border-slate-800 px-3 py-2">
             <Eye size={14} className="text-slate-400" />
             <span className="text-xs uppercase tracking-wide text-slate-400">
               {pdfName ? `Preview · ${pdfName}` : "Preview"}
@@ -285,14 +296,16 @@ function Editor({ jobId, name, job }: EditorProps) {
             ) : null}
           </div>
           {pdfName && pdfAvailable ? (
+            // The browser's PDF viewer handles its own internal
+            // scrolling — we just give the iframe a bounded box.
             <iframe
               key={`${pdfName}-${pdfVersion}`}
               src={`${api.artifactUrl(jobId, pdfName)}?v=${pdfVersion}`}
-              className="flex-1 bg-slate-950"
+              className="min-h-0 w-full flex-1 bg-slate-950"
               title={`${pdfName} preview`}
             />
           ) : (
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-sm text-slate-400">
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 overflow-auto p-6 text-center text-sm text-slate-400">
               <Hammer size={20} className="text-slate-500" />
               <p className="max-w-xs">
                 {pdfName
@@ -333,7 +346,7 @@ function StatusFooter({
   if (!hasMessage) return null;
 
   return (
-    <div className="border-t border-slate-800 px-3 py-2 text-xs">
+    <div className="flex-shrink-0 border-t border-slate-800 px-3 py-2 text-xs">
       {compileError ? (
         <div className="flex items-start gap-2 text-rose-300">
           <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />

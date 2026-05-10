@@ -1264,12 +1264,19 @@ def _tailor_record(
         encoding="utf-8",
     )
 
+    # ``tailor_for_job_description`` writes artifacts into
+    # ``<output_root>/jobs/<slug>/`` (it appends the ``jobs/``
+    # segment internally via :func:`slug_from_paths`). We must hand
+    # it the workspace *root* — passing ``ws.jobs_dir`` doubles up
+    # the ``jobs/`` segment and lands the resume under
+    # ``output/web/jobs/jobs/<slug>/``, while ``job.json`` for the
+    # same record lives under ``output/web/jobs/<slug>/``.
     outputs = tailor_for_job_description(
         llm,
         jd_path=job_json,
         profile_text=profile_text,
         profile_skills=profile_skills,
-        output_root=ws.jobs_dir,
+        output_root=ws.path,
         target_skills=list(target_skills or []),
         no_pdf=no_pdf,
         email=None,

@@ -3,13 +3,10 @@ import { Link, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   Building2,
-  Download,
   ExternalLink,
-  FileCheck2,
   Loader2,
   Mail,
   MapPin,
-  Pencil,
   Trash2,
   Wand2,
 } from "lucide-react";
@@ -26,6 +23,7 @@ import {
   pickAcceptableUrl,
   shortHostname,
 } from "@/lib/format";
+import ArtifactPreview from "@/components/ArtifactPreview";
 import EmailModal from "@/components/EmailModal";
 import Markdown from "@/components/Markdown";
 import TailorModal, {
@@ -34,10 +32,6 @@ import TailorModal, {
 import TaskProgress from "@/components/TaskProgress";
 import { api } from "@/lib/api";
 
-const ARTIFACTS_PRIMARY = [
-  { name: "resume.pdf", label: "Resume PDF" },
-  { name: "cover_letter.pdf", label: "Cover letter PDF" },
-];
 const ARTIFACTS_SOURCES = [
   { name: "resume.md", label: "resume.md" },
   { name: "resume.tex", label: "resume.tex" },
@@ -247,48 +241,11 @@ export default function JobDetail() {
       ) : null}
 
       {isTailored ? (
-        <section className="card space-y-3 p-5">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-            <FileCheck2 size={16} className="text-brand-400" />
-            Generated artifacts
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {ARTIFACTS_PRIMARY.map((a) =>
-              available[a.name] ? (
-                <a
-                  key={a.name}
-                  href={api.artifactUrl(j.job_id, a.name)}
-                  className="btn-primary"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <Download size={14} />
-                  {a.label}
-                </a>
-              ) : null,
-            )}
-            {available["resume.tex"] ? (
-              <Link
-                to={`/jobs/${j.job_id}/edit/resume.tex`}
-                className="btn-secondary"
-                title="Open the live LaTeX editor for the tailored resume"
-              >
-                <Pencil size={14} /> Edit resume.tex
-              </Link>
-            ) : null}
-            {available["cover_letter.tex"] ? (
-              <Link
-                to={`/jobs/${j.job_id}/edit/cover_letter.tex`}
-                className="btn-secondary"
-                title="Open the live LaTeX editor for the cover letter"
-              >
-                <Pencil size={14} /> Edit cover_letter.tex
-              </Link>
-            ) : null}
-          </div>
-          <details className="text-sm">
+        <>
+          <ArtifactPreview job={j} />
+          <details className="card p-4 text-sm">
             <summary className="cursor-pointer text-slate-400 hover:text-slate-200">
-              Sources & raw files
+              Sources &amp; raw files
             </summary>
             <div className="mt-2 flex flex-wrap gap-2">
               {ARTIFACTS_SOURCES.filter((a) => available[a.name]).map((a) => (
@@ -304,7 +261,7 @@ export default function JobDetail() {
               ))}
             </div>
           </details>
-        </section>
+        </>
       ) : (
         <section className="card border-dashed p-5 text-sm text-slate-400">
           No tailored resume yet. Click <span className="font-semibold text-slate-200">Tailor resume + cover letter</span> above to generate one.

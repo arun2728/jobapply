@@ -422,6 +422,94 @@ def test_tailor_one_endpoint_runs_pipeline(
     assert detail["tailored_resume"]["document_title"] == "Test Candidate"
 
 
+def test_tailor_writes_artifacts_under_workspace_jobs_slug_not_double_jobs(
+    app_factory: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: ``_tailor_record`` previously passed
+    ``ws.jobs_dir`` as ``output_root`` to
+    :func:`tailor_for_job_description`, but that helper appends its
+    own ``jobs/`` segment via :func:`slug_from_paths` — landing every
+    artifact under ``<workspace>/jobs/jobs/<slug>/`` instead of
+    ``<workspace>/jobs/<slug>/`` where ``job.json`` already lived.
+
+    The fix is to hand it ``ws.path`` (the workspace *root*); this
+    test pins that contract by asserting both:
+
+    1. The kwarg the server passes is exactly ``ws.path``.
+    2. After tailoring runs, the on-disk artifacts live in the same
+       directory as ``job.json`` (no doubled ``jobs/`` segment).
+    """
+    client, tmp_path, _ = app_factory()
+    from jobapply import server as srv
+
+    monkeypatch.setattr(
+        srv, "iter_search_jobs", lambda inp: iter([_stub_raw("a1")])
+    )
+    seed = client.post("/api/search", json={"titles": ["X"]}).json()
+    _wait_for_task(client, seed["task_id"])
+
+    monkeypatch.setattr(srv, "create_chat_model", lambda *a, **kw: object())
+    seen: dict[str, Any] = {}
+
+    def _fake_tailor(llm: Any, **kwargs: Any) -> Any:
+        from jobapply.nodes.render import slug_from_paths
+        from jobapply.tailor_one import TailorOutputs
+
+        seen["output_root"] = kwargs["output_root"]
+        # Mirror what the real helper does so the assertion below
+        # exercises the same path layout production sees.
+        slug = Path(kwargs["jd_path"]).parent.name
+        job_dir = slug_from_paths(slug, kwargs["output_root"])
+        (job_dir / "resume.md").write_text("R", encoding="utf-8")
+        (job_dir / "resume.tex").write_text("R", encoding="utf-8")
+        (job_dir / "cover_letter.md").write_text("C", encoding="utf-8")
+        (job_dir / "cover_letter.tex").write_text("C", encoding="utf-8")
+        return TailorOutputs(
+            job_dir=job_dir,
+            job=_stub_raw("a1"),
+            resume=_stub_tailored_resume(),
+            cover=_stub_cover_letter(),
+            email=None,
+            resume_md=job_dir / "resume.md",
+            resume_tex=job_dir / "resume.tex",
+            cover_md=job_dir / "cover_letter.md",
+            cover_tex=job_dir / "cover_letter.tex",
+        )
+
+    monkeypatch.setattr(srv, "tailor_for_job_description", _fake_tailor)
+
+    resp = client.post("/api/jobs/a1/tailor", json={"no_pdf": True})
+    final = _wait_for_task(client, resp.json()["task_id"])
+    assert final["status"] == "succeeded", final
+
+    workspace_root = tmp_path / "ws"
+    # The kwarg contract.
+    assert seen["output_root"] == workspace_root, (
+        f"Expected output_root={workspace_root!r} (the workspace "
+        f"root) but got {seen['output_root']!r}. Passing "
+        f"`ws.jobs_dir` doubles up the 'jobs/' segment."
+    )
+    # And the on-disk layout: resume.md must sit alongside job.json
+    # in the per-slug folder, with NO doubled `jobs/` ancestor.
+    detail = client.get("/api/jobs/a1").json()
+    rel = Path(detail["job_dir_relative"])
+    job_dir = workspace_root / rel
+    assert (job_dir / "job.json").is_file(), (
+        f"job.json should be in {job_dir}"
+    )
+    assert (job_dir / "resume.md").is_file(), (
+        f"resume.md should sit next to job.json in {job_dir}, "
+        f"not under a doubled jobs/ dir"
+    )
+    assert "jobs/jobs/" not in str(job_dir), (
+        f"Doubled jobs/ segment in {job_dir}"
+    )
+    assert not (workspace_root / "jobs" / "jobs").exists(), (
+        f"A 'jobs/jobs/' directory leaked under {workspace_root}"
+    )
+
+
 def test_tailor_one_returns_400_when_description_empty(
     app_factory: Any,
     monkeypatch: pytest.MonkeyPatch,
