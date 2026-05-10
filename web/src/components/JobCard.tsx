@@ -13,6 +13,7 @@ import {
   shortHostname,
 } from "@/lib/format";
 import type { JobRecord } from "@/lib/types";
+import Markdown from "./Markdown";
 
 interface Props {
   job: JobRecord;
@@ -87,11 +88,14 @@ export default function JobCard({ job, selected, onToggle }: Props) {
         <p className="line-clamp-2 text-sm text-slate-400">
           {job.fit.rationale}
         </p>
-      ) : (
-        <p className="line-clamp-2 text-sm text-slate-500">
-          {(job.description || "").slice(0, 240)}
-        </p>
-      )}
+      ) : job.description ? (
+        <Markdown
+          compact
+          className="line-clamp-2 text-sm leading-snug text-slate-500"
+        >
+          {job.description.slice(0, 600)}
+        </Markdown>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2 text-xs">
         {isTailored ? (
           <span className="flex items-center gap-1 text-brand-300">

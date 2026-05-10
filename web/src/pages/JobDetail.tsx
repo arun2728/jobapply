@@ -25,6 +25,7 @@ import {
   shortHostname,
 } from "@/lib/format";
 import EmailModal from "@/components/EmailModal";
+import Markdown from "@/components/Markdown";
 import TaskProgress from "@/components/TaskProgress";
 import { api } from "@/lib/api";
 
@@ -250,9 +251,13 @@ export default function JobDetail() {
         <h2 className="text-sm font-semibold text-slate-200">
           Job description
         </h2>
-        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded bg-slate-950/40 p-3 font-sans text-sm text-slate-200">
-          {(j.description || "").trim() || "(empty)"}
-        </pre>
+        {(j.description || "").trim() ? (
+          <Markdown className="max-h-[60vh] overflow-auto rounded bg-slate-950/40 p-4">
+            {j.description!}
+          </Markdown>
+        ) : (
+          <p className="text-sm italic text-slate-500">(empty)</p>
+        )}
       </section>
 
       {j.tailored_resume ? (
