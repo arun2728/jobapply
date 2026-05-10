@@ -72,6 +72,7 @@ from jobapply.profile_validation import (
     validate_profile_path,
 )
 from jobapply.runner import run_pipeline
+from jobapply.workspace import Workspace
 from jobapply.tailor_one import (
     JD_SUPPORTED_SUFFIXES,
     TAILOR_INPUT_SUFFIXES,
@@ -767,6 +768,70 @@ def config_cmd(
     _persist_config(cfg, cfg_path)
 
 
+@app.command("workspace")
+def workspace_cmd(
+    workspace_path: str = typer.Argument(
+        ...,
+        help="Path to a workspace directory (created by `jobapply search/run --workspace`).",
+    ),
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        "-n",
+        help="How many recent search/run invocations to show.",
+    ),
+) -> None:
+    """Inspect a centralized workspace: catalog size + recent searches.
+
+    Prints the SQLite-backed workspace catalog summary plus the latest
+    search / run history rows recorded in ``workspace_searches`` so you
+    can see at a glance how big the workspace has grown and which
+    invocations contributed to it.
+    """
+    target = Path(workspace_path).expanduser()
+    if not target.is_absolute():
+        target = Path.cwd() / target
+    target = target.resolve()
+    if not target.exists() or not (target / "workspace.db").is_file():
+        console.print(
+            f"[red]Not a workspace:[/red] {target}\n"
+            "[dim]Run `jobapply search --workspace <path>` to create one.[/dim]"
+        )
+        raise typer.Exit(1)
+    ws = Workspace.open(target)
+    total = ws.count()
+    console.print(
+        f"[bold]Workspace[/bold] {ws.path}\n"
+        f"[dim]{total} job{'s' if total != 1 else ''} cataloged "
+        f"in {ws.db_path.name}[/dim]"
+    )
+    searches = ws.list_searches(limit=limit)
+    if not searches:
+        console.print("[dim]No search/run history yet.[/dim]")
+        return
+    table = Table(title=f"Last {len(searches)} invocations", show_header=True)
+    table.add_column("#", justify="right")
+    table.add_column("Command")
+    table.add_column("Started")
+    table.add_column("Provider/Model")
+    table.add_column("Fetched", justify="right")
+    table.add_column("New", justify="right", style="green")
+    table.add_column("Dup", justify="right", style="yellow")
+    for entry in searches:
+        started = entry.started_at.isoformat(timespec="seconds") if entry.started_at else ""
+        pm = " / ".join(filter(None, [entry.provider, entry.model])) or "—"
+        table.add_row(
+            str(entry.id or ""),
+            entry.command or "",
+            started,
+            pm,
+            str(entry.fetched),
+            str(entry.new_jobs),
+            str(entry.duplicate_jobs),
+        )
+    console.print(table)
+
+
 @app.command("list")
 def list_runs(
     output_dir: str | None = typer.Option(None, "--output-dir", "-o"),
@@ -836,6 +901,18 @@ def run(
         "-o",
         help="Override jobapply.toml `output_dir`.",
     ),
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        "-w",
+        help=(
+            "Path to a centralized workspace directory. When set, this run "
+            "appends into the workspace's SQLite catalog (workspace.db) and "
+            "shares per-job artifacts with previous searches, instead of "
+            "creating a new run-<ts> folder. Jobs already cataloged are "
+            "deduped automatically (use --force to re-process them)."
+        ),
+    ),
     with_networking: bool = typer.Option(False, "--with-networking"),
     no_pdf: bool = typer.Option(False, "--no-pdf"),
     linkedin_descriptions: bool = typer.Option(
@@ -898,8 +975,14 @@ def run(
     )
     ph = profile_hash_fn(profile_text)
     run_id = f"run-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}"
-    run_dir = root / effective_output / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
+    workspace_dir = _resolve_workspace_dir(workspace, root)
+    workspace_obj: Workspace | None = None
+    if workspace_dir is not None:
+        workspace_obj = Workspace.open(workspace_dir)
+        run_dir = workspace_obj.path
+    else:
+        run_dir = root / effective_output / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
     ledger_path = _ledger_db_path(cfg)
     search_input = JobSearchInput(
         titles=title_list,
@@ -911,6 +994,14 @@ def run(
         site_names=cfg.sites,
         linkedin_fetch_description=linkedin_descriptions,
     ).model_dump(mode="json")
+    workspace_search_id: int | None = None
+    if workspace_obj is not None:
+        workspace_search_id = workspace_obj.start_search(
+            command="run",
+            search_input=search_input,
+            provider=prov,
+            model=mdl,
+        )
     initial = {
         "run_id": run_id,
         "run_dir": str(run_dir.resolve()),
@@ -929,6 +1020,10 @@ def run(
         "jobs_raw": [],
         "queue": [],
     }
+    if workspace_obj is not None:
+        initial["workspace_path"] = str(workspace_obj.path)
+        if workspace_search_id is not None:
+            initial["workspace_search_id"] = workspace_search_id
     _validate_keys(cfg, prov)
     backend = probe_md_pdf_backend() or "none"
     backend_note = {
@@ -950,18 +1045,54 @@ def run(
             "in jobapply.toml or install tectonic/pdflatex"
         ),
     }[tex_backend]
+    workspace_summary = ""
+    if workspace_obj is not None:
+        existing = workspace_obj.count()
+        workspace_summary = (
+            f"\n[dim]Workspace[/dim] {workspace_obj.path} "
+            f"[dim]({existing} job{'s' if existing != 1 else ''} cataloged)[/dim]"
+        )
     console.print(
         f"[bold]Run[/bold] {run_id} → {run_dir}\n"
         f"[dim]results_wanted={effective_results}  min_fit={effective_min_fit}  "
         f"sites={','.join(cfg.sites)}[/dim]\n"
         f"[dim]Markdown PDF backend:[/dim] {backend_note}\n"
-        f"[dim]LaTeX PDF backend:[/dim] {tex_backend_note}",
+        f"[dim]LaTeX PDF backend:[/dim] {tex_backend_note}{workspace_summary}",
     )
     final_state = run_pipeline(
         initial, run_dir=run_dir, run_id=run_id, show_progress=True, console=console
     )
     n_searched = len(final_state.get("jobs_raw") or [])
+    if workspace_obj is not None:
+        # Re-render jobs.json + jobs.csv from the DB so the run summary
+        # reflects the entire workspace catalog (the graph already
+        # upserted into workspace.db as it processed each job).
+        workspace_obj.flush_files(
+            run_id=run_id,
+            search_input=search_input,
+            profile_path=str(prof.resolve()),
+            provider=prov,
+            model=mdl,
+        )
+        results = final_state.get("results") or []
+        new_jobs = sum(
+            1 for r in results if r.get("status") not in {"cached"}
+        )
+        duplicate_jobs = sum(1 for r in results if r.get("status") == "cached")
+        if workspace_search_id is not None:
+            workspace_obj.finish_search(
+                workspace_search_id,
+                fetched=n_searched,
+                new_jobs=new_jobs,
+                duplicate_jobs=duplicate_jobs,
+            )
     _print_run_summary(run_dir, n_searched)
+    if workspace_obj is not None:
+        total = workspace_obj.count()
+        console.print(
+            f"[dim]Workspace now contains {total} job{'s' if total != 1 else ''} "
+            f"at {workspace_obj.path}.[/dim]"
+        )
     console.print("[green]Finished.[/green]")
 
 
@@ -1045,6 +1176,20 @@ def _persist_job_record(run_dir: Path, record: JobRecord) -> Path:
     job_dir = slug_from_paths(slug, run_dir)
     write_job_json(job_dir, record.model_dump(mode="json"))
     return job_dir / "job.json"
+
+
+def _resolve_workspace_dir(workspace: str | None, root: Path) -> Path | None:
+    """Expand ``--workspace`` into an absolute path (relative to ``root``).
+
+    Returns ``None`` when the flag is unset so callers can fall through
+    to the timestamped-folder behaviour.
+    """
+    if not workspace:
+        return None
+    p = Path(workspace).expanduser()
+    if not p.is_absolute():
+        p = root / p
+    return p.resolve()
 
 
 def _print_top_matches(records: list[JobRecord], *, limit: int = 5) -> None:
@@ -1139,6 +1284,26 @@ def search_cmd(
         "-o",
         help="Override jobapply.toml `output_dir`. Artifacts land in <output>/search-<ts>/.",
     ),
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        "-w",
+        help=(
+            "Path to a centralized workspace directory. When set, this run "
+            "appends into the workspace's SQLite catalog (workspace.db) "
+            "instead of creating a new search-<ts> folder; jobs already in "
+            "the workspace are reported as duplicates and skipped (use "
+            "--force to re-fetch)."
+        ),
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help=(
+            "In --workspace mode, re-fetch and overwrite jobs that are "
+            "already in workspace.db. Ignored without --workspace."
+        ),
+    ),
     linkedin_descriptions: bool = typer.Option(
         True,
         "--linkedin-descriptions/--no-linkedin-descriptions",
@@ -1162,6 +1327,11 @@ def search_cmd(
     needs your provider credentials and ``profile.json``. Use
     ``--provider``/``--model`` to override the active LLM for this
     invocation.
+
+    Pass ``--workspace <path>`` to append into a centralized,
+    SQLite-backed workspace folder instead of creating a fresh
+    ``search-<ts>`` directory each time. Duplicate jobs (matched by
+    stable ``job_id``) are detected automatically and skipped.
     """
     load_dotenv_if_present()
     root = Path.cwd()
@@ -1219,9 +1389,15 @@ def search_cmd(
             "--score.[/yellow]"
         )
 
+    workspace_dir = _resolve_workspace_dir(workspace, root)
+    workspace_obj: Workspace | None = None
     run_id = f"search-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}"
-    run_dir = root / effective_output / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
+    if workspace_dir is not None:
+        workspace_obj = Workspace.open(workspace_dir)
+        run_dir = workspace_obj.path
+    else:
+        run_dir = root / effective_output / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
 
     search_input = JobSearchInput(
         titles=title_list,
@@ -1237,10 +1413,17 @@ def search_cmd(
     score_summary = (
         f"  provider={prov}  model={mdl}" if score else "  [dim](no scoring)[/dim]"
     )
+    workspace_summary = ""
+    if workspace_obj is not None:
+        existing = workspace_obj.count()
+        workspace_summary = (
+            f"\n[dim]Workspace[/dim] {workspace_obj.path} "
+            f"[dim]({existing} job{'s' if existing != 1 else ''} already cataloged)[/dim]"
+        )
     console.print(
         f"[bold]Search[/bold] {run_id} → {run_dir}\n"
         f"[dim]results_wanted={effective_results}  sites={','.join(site_list)}"
-        f"  score={score}[/dim]{score_summary}"
+        f"  score={score}[/dim]{score_summary}{workspace_summary}"
     )
 
     # Build an empty index up-front and seed the on-disk artifacts so
@@ -1251,29 +1434,54 @@ def search_cmd(
         profile_path=profile_path_str,
         provider=prov,
         model=mdl,
-        jobs=[],
+        jobs=workspace_obj.all_records() if workspace_obj is not None else [],
     )
     jobs_path = run_dir / "jobs.json"
     csv_path = run_dir / "jobs.csv"
     meta_path = run_dir / "meta.json"
 
-    def _write_meta(*, fetched: int) -> None:
-        # meta.json is informational; rewriting it on each flush gives
-        # users a quick glance at progress (`fetched` ticks up live).
-        atomic_write_json(
-            meta_path,
-            {
-                "run_id": run_id,
-                "search_input": search_input.model_dump(mode="json"),
-                "scored": score,
-                "provider": prov,
-                "model": mdl,
-                "profile_path": profile_path_str,
-                "fetched": fetched,
-            },
+    search_id: int | None = None
+    if workspace_obj is not None:
+        search_id = workspace_obj.start_search(
+            command="search",
+            search_input=search_input,
+            provider=prov,
+            model=mdl,
         )
 
-    _flush_search_state(run_dir, idx)
+    def _write_meta(*, fetched: int, new_jobs: int = 0, duplicates: int = 0) -> None:
+        # meta.json is informational; rewriting it on each flush gives
+        # users a quick glance at progress (`fetched` ticks up live).
+        payload: dict[str, Any] = {
+            "run_id": run_id,
+            "search_input": search_input.model_dump(mode="json"),
+            "scored": score,
+            "provider": prov,
+            "model": mdl,
+            "profile_path": profile_path_str,
+            "fetched": fetched,
+        }
+        if workspace_obj is not None:
+            payload["workspace"] = str(workspace_obj.path)
+            payload["workspace_total_jobs"] = workspace_obj.count()
+            payload["new_jobs"] = new_jobs
+            payload["duplicate_jobs"] = duplicates
+            payload["search_id"] = search_id
+        atomic_write_json(meta_path, payload)
+
+    if workspace_obj is not None:
+        # Workspace mode: re-render jobs.json/csv from the DB so the
+        # initial flush reflects the existing catalog instead of an
+        # empty index.
+        workspace_obj.flush_files(
+            run_id=run_id,
+            search_input=search_input,
+            profile_path=profile_path_str,
+            provider=prov,
+            model=mdl,
+        )
+    else:
+        _flush_search_state(run_dir, idx)
     _write_meta(fetched=0)
     jobs_subdir = run_dir / "jobs"
     console.print(
@@ -1281,7 +1489,9 @@ def search_cmd(
         f"[dim]and per-job JSONs under[/dim] {jobs_subdir}"
     )
 
-    records: list[JobRecord] = idx.jobs  # alias the live list
+    records: list[JobRecord] = []  # records produced by THIS invocation
+    duplicate_count = 0
+    new_count = 0
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -1293,12 +1503,61 @@ def search_cmd(
         task = progress.add_task("Searching job boards", total=None)
         for j in iter_search_jobs(search_input):
             rec = _record_from_raw_job(j)
-            records.append(rec)
-            _persist_job_record(run_dir, rec)
-            _flush_search_state(run_dir, idx)
-            _write_meta(fetched=len(records))
-            progress.update(task, advance=1)
-    console.print(f"[green]Fetched[/green] {len(records)} jobs")
+            if workspace_obj is not None:
+                already_seen = workspace_obj.is_seen(rec.job_id)
+                if already_seen and not force:
+                    duplicate_count += 1
+                    progress.update(
+                        task,
+                        advance=1,
+                        description=(
+                            f"Searching job boards "
+                            f"[dim](dup: {duplicate_count}, new: {new_count})[/dim]"
+                        ),
+                    )
+                    continue
+                inserted = workspace_obj.upsert_job(rec, search_id=search_id)
+                if inserted:
+                    new_count += 1
+                else:
+                    # ``--force`` overwrote a row we already had.
+                    duplicate_count += 1
+                _persist_job_record(run_dir, rec)
+                workspace_obj.flush_files(
+                    run_id=run_id,
+                    search_input=search_input,
+                    profile_path=profile_path_str,
+                    provider=prov,
+                    model=mdl,
+                )
+                _write_meta(
+                    fetched=new_count + duplicate_count,
+                    new_jobs=new_count,
+                    duplicates=duplicate_count,
+                )
+                records.append(rec)
+                progress.update(
+                    task,
+                    advance=1,
+                    description=(
+                        f"Searching job boards "
+                        f"[dim](dup: {duplicate_count}, new: {new_count})[/dim]"
+                    ),
+                )
+            else:
+                records.append(rec)
+                idx.jobs.append(rec)
+                _persist_job_record(run_dir, rec)
+                _flush_search_state(run_dir, idx)
+                _write_meta(fetched=len(records))
+                progress.update(task, advance=1)
+    if workspace_obj is not None:
+        console.print(
+            f"[green]Fetched[/green] {len(records)} jobs "
+            f"[dim]({new_count} new, {duplicate_count} duplicate)[/dim]"
+        )
+    else:
+        console.print(f"[green]Fetched[/green] {len(records)} jobs")
 
     if score and records:
         try:
@@ -1348,9 +1607,28 @@ def search_cmd(
                 new_rec = _record_from_raw_job(job, fit=fit, error=err)
                 records[i] = new_rec
                 _persist_job_record(run_dir, new_rec)
-                _flush_search_state(run_dir, idx)
+                if workspace_obj is not None:
+                    workspace_obj.upsert_job(new_rec, search_id=search_id)
+                    workspace_obj.flush_files(
+                        run_id=run_id,
+                        search_input=search_input,
+                        profile_path=profile_path_str,
+                        provider=prov,
+                        model=mdl,
+                    )
+                else:
+                    idx.jobs[i] = new_rec
+                    _flush_search_state(run_dir, idx)
                 desc_label = (job.title or job.company or job.job_id)[:48]
                 progress.update(task, advance=1, description=f"Scoring {desc_label}")
+
+    if workspace_obj is not None and search_id is not None:
+        workspace_obj.finish_search(
+            search_id,
+            fetched=len(records) + duplicate_count,
+            new_jobs=new_count,
+            duplicate_jobs=duplicate_count,
+        )
 
     console.print(
         f"[green]Wrote[/green] {jobs_path}\n"
@@ -1367,6 +1645,12 @@ def search_cmd(
             + ".[/dim]"
         )
         _print_top_matches(records)
+    if workspace_obj is not None:
+        total = workspace_obj.count()
+        console.print(
+            f"[dim]Workspace now contains {total} job{'s' if total != 1 else ''} "
+            f"({new_count} added this search, {duplicate_count} duplicates skipped).[/dim]"
+        )
     console.print("[green]Finished search.[/green]")
 
 

@@ -352,11 +352,72 @@ After every run, `jobapply` writes `output/run-<id>/jobs.csv` with one row per j
 |---------|-------------|
 | `jobapply init` | Interactive setup: pick **one or more** providers, fill in connection details, and import your resume into a structured `profile.json`. **A resume is required**: pass `--resume <path>` (`.md` / `.txt` / `.docx` / `.pdf`, including LinkedIn PDF export) or `--paste` (read text from stdin / multiline prompt). The default provider's LLM extracts the resume into the [`Profile` schema](jobapply/profile.py) via structured output, so make sure that provider's key is reachable before running it. `--non-interactive` skips provider prompts but still requires `--resume` or `--paste`. |
 | `jobapply config` | Re-run the multi-provider prompts (add/remove providers, change credentials, or pick a new default); `--show` prints the resolved config |
-| `jobapply run` | Full pipeline (prompts unless `--yes`). Use `--provider` / `--model` to override the default LLM for this run — see [Switching providers per run](#switching-providers-per-run). |
-| `jobapply search` | **Lightweight cousin of `run`**: fetch jobs into `jobs.{json,csv}` without tailoring resumes. Add `--score` to also score each job against `profile.json`. See [Fetch-only search](#fetch-only-search). |
+| `jobapply run` | Full pipeline (prompts unless `--yes`). Use `--provider` / `--model` to override the default LLM for this run — see [Switching providers per run](#switching-providers-per-run). Pass `--workspace <path>` to append into a centralized, dedupe-aware folder — see [Centralized workspaces](#centralized-workspaces). |
+| `jobapply search` | **Lightweight cousin of `run`**: fetch jobs into `jobs.{json,csv}` without tailoring resumes. Add `--score` to also score each job against `profile.json`. See [Fetch-only search](#fetch-only-search). Supports `--workspace` for accumulating searches into one folder. |
 | `jobapply tailor` | Tailor your resume + cover letter for **one** JD file (skip search). Accepts the same `--provider` / `--model` overrides as `run`. Optional `--with-email` drafts a ready-to-paste application email. See below. |
 | `jobapply resume <run-name>` | Continue from `meta.json` (default: reset checkpoint) |
+| `jobapply workspace <path>` | Inspect a centralized workspace: catalog size + recent search/run history. See [Centralized workspaces](#centralized-workspaces). |
 | `jobapply list` | List `output/run-*` folders |
+
+### Centralized workspaces
+
+Each `jobapply search` / `jobapply run` invocation defaults to a fresh
+timestamped folder (`output/search-<ts>/`, `output/run-<ts>/`). That's
+fine for one-off triage, but it spreads results across dozens of
+directories when you're job-hunting over weeks: the same role pops up
+multiple times, you can't tell at a glance which jobs you've already
+tailored, and there's no easy answer to "how many distinct roles have
+I looked at?".
+
+Pass `--workspace <path>` (alias `-w`) to keep everything in one place:
+
+```bash
+# Bootstrap a workspace with an initial search.
+jobapply search --workspace ~/jobs/2026-q2 --titles "ML Engineer" --yes
+
+# A week later — same workspace, different titles. Duplicates auto-skipped.
+jobapply search --workspace ~/jobs/2026-q2 --titles "Backend Engineer,Platform Engineer" --yes
+
+# Tailor the new pending rows in-place (still in the same folder).
+jobapply run --workspace ~/jobs/2026-q2 --titles "Backend Engineer" --yes
+
+# Inspect what's accumulated.
+jobapply workspace ~/jobs/2026-q2
+```
+
+What changes in `--workspace` mode:
+
+| Aspect | Default mode (`output/run-<ts>/`) | `--workspace <path>` mode |
+|---|---|---|
+| Folder per invocation | New timestamped subdirectory each time | One persistent folder; new artifacts append |
+| Dedupe scope | Workspace-local `.jobapply/ledger.db` only | Workspace's `workspace.db` **plus** the global ledger |
+| `jobs.csv` / `jobs.json` | One per run | One master file per workspace, regenerated from the SQL catalog after every operation |
+| Search history | Implicit (folder names) | Explicit rows in the `workspace_searches` table |
+| Duplicate behavior | Re-searched jobs cost LLM calls again | Already-cataloged jobs are skipped (counted as duplicates) — pass `--force` to re-fetch / re-tailor |
+
+Workspace layout:
+
+```text
+<workspace>/
+├── workspace.db          # SQLite (workspace_jobs + workspace_searches)
+├── jobs.json             # Master index, regenerated from workspace.db
+├── jobs.csv              # Master CSV (Google-Sheets-friendly), idem
+├── meta.json             # Latest search snapshot + counts
+├── checkpoint.sqlite     # LangGraph checkpoint (used by `run`)
+└── jobs/<slug>/          # Per-job artifacts: job.json, resume.md/pdf/tex,
+                          # cover_letter.md/pdf/tex, etc. — same shape as
+                          # the per-run output, just shared across runs.
+```
+
+The `workspace.db` is the source of truth: every `jobapply search` /
+`jobapply run` upserts into it as it goes, then re-renders `jobs.json`
+and `jobs.csv` from the catalog. Drop `workspace.db` and you can rebuild
+both files with a one-line script (`Workspace.open(...).flush_files(...)`),
+which is handy if you've been hand-editing the JSON and want to reset.
+
+`jobapply workspace <path>` prints the catalog size and recent search /
+run history so you can answer "what did I do yesterday?" without
+diff-ing folders. Add `--limit N` to see deeper history.
 
 ### Fetch-only search
 

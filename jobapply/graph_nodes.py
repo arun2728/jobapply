@@ -50,6 +50,7 @@ from jobapply.profile import load_profile, profile_skill_list, profile_to_text
 from jobapply.run_meta import read_meta, write_meta
 from jobapply.utils import profile_hash as profile_hash_fn
 from jobapply.utils import slugify
+from jobapply.workspace import Workspace
 
 
 def _template_index_from_state(state: GraphState) -> JobsIndex:
@@ -90,6 +91,14 @@ def search_node(state: GraphState) -> dict[str, Any]:
     return {"jobs_raw": raw, "log": [f"search: found {len(raw)} jobs"]}
 
 
+def _open_workspace(state: GraphState) -> Workspace | None:
+    """Return a :class:`Workspace` when the run is in workspace mode."""
+    ws_path = state.get("workspace_path")
+    if not isinstance(ws_path, str) or not ws_path:
+        return None
+    return Workspace.open(Path(ws_path))
+
+
 def dedupe_node(state: GraphState) -> dict[str, Any]:
     ledger_path = Path(state["ledger_db_path"])
     engine = get_engine(ledger_path)
@@ -98,6 +107,8 @@ def dedupe_node(state: GraphState) -> dict[str, Any]:
     force = bool(state.get("force"))
     run_dir = Path(state["run_dir"])
     template_index = _template_index_from_state(state)
+    workspace = _open_workspace(state)
+    workspace_search_id = state.get("workspace_search_id") if workspace else None
 
     raw_dicts = state.get("jobs_raw") or []
     queue: list[dict[str, Any]] = []
@@ -118,6 +129,32 @@ def dedupe_node(state: GraphState) -> dict[str, Any]:
         # tailored ad-hoc since the run flow won't process them again.
         _job_dir = slug_from_paths(slugify(job.title, job.company, job.job_id), run_dir)
         write_job_json(_job_dir, job.model_dump(mode="json"))
+
+        # Workspace-level dedupe. Independent from the global ledger so
+        # users can populate a workspace from a different profile and
+        # still skip duplicates. Falls through to the ledger checks
+        # below when the workspace doesn't know about the job yet.
+        if workspace is not None and not force and workspace.is_seen(job.job_id):
+            existing = workspace.get(job.job_id)
+            cached_rec = existing or JobRecord(
+                job_id=job.job_id,
+                title=job.title,
+                company=job.company,
+                location=job.location,
+                description=(job.description or "")[:2000],
+                job_url=job.job_url,
+                apply_url=job.apply_url,
+                site=job.site,
+                status=LedgerStatus.cached,
+                application=job.application,
+                error="Already in workspace; pass --force to re-process.",
+                processed_at=datetime.now(UTC),
+            )
+            # Touch last_seen so workspace history reflects the latest run.
+            workspace.upsert_job(cached_rec, search_id=workspace_search_id)
+            upsert_job_record(run_dir, template_index, cached_rec)
+            cached_records.append(cached_rec.model_dump(mode="json"))
+            continue
 
         if not force and should_skip(engine, job.job_id, ph, skip_if_done=True):
             with Session(engine) as session:
@@ -194,6 +231,8 @@ def process_one_node(state: GraphState) -> dict[str, Any]:
     ledger_path = Path(state["ledger_db_path"])
     engine = get_engine(ledger_path)
     init_db(engine)
+    workspace = _open_workspace(state)
+    workspace_search_id = state.get("workspace_search_id") if workspace else None
     profile_text = state["profile_text"]
     inp = JobSearchInput.model_validate(state["search_input"])
     min_fit = float(state.get("min_fit", 0.35))
@@ -222,6 +261,8 @@ def process_one_node(state: GraphState) -> dict[str, Any]:
             )
             upsert_job_record(run_dir, template_index, rec)
             update_status(engine, job.job_id, LedgerStatus.skipped, run_id=state["run_id"])
+            if workspace is not None:
+                workspace.upsert_job(rec, search_id=workspace_search_id)
             return {
                 "queue": new_queue,
                 "results": [rec.model_dump(mode="json")],
@@ -327,6 +368,8 @@ def process_one_node(state: GraphState) -> dict[str, Any]:
             paths={k: v for k, v in artifacts.items() if v},
             run_id=state["run_id"],
         )
+        if workspace is not None:
+            workspace.upsert_job(rec, search_id=workspace_search_id)
         return {
             "queue": new_queue,
             "results": [rec.model_dump(mode="json")],
@@ -350,6 +393,8 @@ def process_one_node(state: GraphState) -> dict[str, Any]:
         )
         upsert_job_record(run_dir, template_index, rec)
         update_status(engine, job.job_id, LedgerStatus.failed, run_id=state["run_id"])
+        if workspace is not None:
+            workspace.upsert_job(rec, search_id=workspace_search_id)
         return {
             "queue": new_queue,
             "results": [rec.model_dump(mode="json")],
