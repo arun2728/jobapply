@@ -26,3 +26,10 @@ class GraphState(TypedDict, total=False):
     results: Annotated[list[dict[str, Any]], operator.add]
     log: Annotated[list[str], operator.add]
     skip_search: NotRequired[bool]
+    # Workspace mode (set when ``jobapply run --workspace <path>`` is
+    # used). When present, ``dedupe_node`` skips jobs already in the
+    # workspace's SQLite catalog and ``process_one_node`` upserts each
+    # processed JobRecord into the same DB so the workspace's
+    # ``jobs.json`` / ``jobs.csv`` stay authoritative.
+    workspace_path: NotRequired[str]
+    workspace_search_id: NotRequired[int]

@@ -5,6 +5,7 @@ from __future__ import annotations
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from jobapply.agents._structured import invoke_structured
 from jobapply.models import FitScore, RawJob
 
 
@@ -15,7 +16,6 @@ def score_fit(
     job: RawJob,
     skills: list[str],
 ) -> FitScore:
-    structured = llm.with_structured_output(FitScore)
     jd = (job.description or "")[:12000]
     sys = SystemMessage(
         content=(
@@ -31,6 +31,4 @@ def score_fit(
             f"CANDIDATE PROFILE:\n{profile_text[:16000]}"
         ),
     )
-    result = structured.invoke([sys, user])
-    assert isinstance(result, FitScore)
-    return result
+    return invoke_structured(llm, FitScore, [sys, user])

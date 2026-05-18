@@ -164,6 +164,9 @@ class EducationItem(BaseModel):
 
     school: str = ""
     degree: str = ""
+    location: str = Field(
+        "", description="Plain-text city/country (e.g. 'Mumbai, India')."
+    )
     dates: str = ""
     gpa: str = Field("", description="GPA value with scale, e.g. '9.6/10' or '3.85/4.0'.")
     coursework: str = Field(

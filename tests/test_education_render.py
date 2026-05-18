@@ -86,6 +86,51 @@ def test_education_empty_list_returns_empty_string() -> None:
     assert _education_latex([]) == ""
 
 
+def test_education_latex_appends_location_to_school_cell() -> None:
+    """When the profile has a location for the entry, it should appear
+    next to the school name in the LaTeX header so the renderer
+    surfaces every fact the candidate provided.
+    """
+    edu = EducationItem(
+        school="University of Mumbai",
+        degree="BE",
+        location="Mumbai, India",
+        dates="2018 - 2022",
+        gpa="8.1/10",
+    )
+    out = _education_latex([edu])
+    assert r"\headingBf{University of Mumbai, Mumbai, India}{2018 - 2022}" in out
+
+
+def test_education_latex_omits_location_when_empty() -> None:
+    """No location → no extra comma; preserves the legacy layout for
+    older profiles that don't include the field."""
+    edu = EducationItem(
+        school="University of Mumbai",
+        degree="BE",
+        dates="2018 - 2022",
+    )
+    out = _education_latex([edu])
+    assert r"\headingBf{University of Mumbai}{2018 - 2022}" in out
+    assert "Mumbai, India" not in out
+
+
+def test_resume_markdown_includes_location_when_present() -> None:
+    resume = _resume_with(
+        education=[
+            EducationItem(
+                school="University of Mumbai",
+                degree="BE",
+                location="Mumbai, India",
+                dates="2018 - 2022",
+                gpa="8.1/10",
+            )
+        ],
+    )
+    out = render_resume_markdown(resume)
+    assert "University of Mumbai, Mumbai, India" in out
+
+
 def test_resume_tex_omits_summary_section() -> None:
     resume = _resume_with(education=[], summary="This summary should not appear.")
     out = fill_resume_tex(resume)

@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from jobapply.agents.resume_tailor import _TailoredBullets
 from jobapply.graph import compile_app
 from jobapply.models import (
     CoverLetter,
@@ -36,6 +37,19 @@ class FakeChatModel:
                     rationale="strong",
                     missing_keywords=[],
                     must_haves_present=[],
+                ),
+            )
+        # Production graph passes a structured profile, so the
+        # tailor agent now asks for ``_TailoredBullets`` instead of
+        # the full ``TailoredResume``. We keep both branches so the
+        # test fake works whether or not ``profile_path`` is set.
+        if schema is _TailoredBullets:
+            return _FakeStructured(
+                _TailoredBullets(
+                    summary="Doer of things.",
+                    skills=["Python"],
+                    experience_bullets=[],
+                    project_bullets=[],
                 ),
             )
         if schema.__name__ == "TailoredResume":
