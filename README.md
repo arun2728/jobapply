@@ -113,6 +113,11 @@ PDFs are always produced. Markdown PDFs go through a three-tier fallback (`pando
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
+
+# The frontend bundle directory must exist for the editable install to succeed
+# (it's gitignored; build it later with `cd web && npm run build`).
+mkdir -p jobapply/web_dist
+
 pip install -e ".[dev]"
 
 # Interactive setup. A resume is mandatory: pass --resume PATH or paste it in.
