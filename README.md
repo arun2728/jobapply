@@ -111,14 +111,24 @@ PDFs are always produced. Markdown PDFs go through a three-tier fallback (`pando
 
 ## Quickstart
 
+### Prerequisites
+
+- **Python 3.11+** — [python.org/downloads](https://www.python.org/downloads/) or via your system package manager.
+- **Node.js 18+** — [nodejs.org](https://nodejs.org/) (only needed if you want to build or develop the Web UI frontend).
+
+### Install
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 
 # The frontend bundle directory must exist for the editable install to succeed
-# (it's gitignored; build it later with `cd web && npm run build`).
+# (it's gitignored and not checked into the repo).
 mkdir -p jobapply/web_dist
 
 pip install -e ".[dev]"
+
+# Build the Web UI frontend (requires Node.js).
+cd web && npm install && npm run build && cd ..
 
 # Interactive setup. A resume is mandatory: pass --resume PATH or paste it in.
 jobapply init --resume ~/Downloads/resume.pdf   # .md / .txt / .docx / .pdf
@@ -127,6 +137,8 @@ jobapply init --resume ~/Downloads/resume.pdf   # .md / .txt / .docx / .pdf
 
 jobapply run --titles "Backend Engineer,ML Engineer" --skills "Python,Kubernetes" --location "Remote" --yes
 ```
+
+> **Note:** The `npm run build` step compiles the React frontend into `jobapply/web_dist/`. Without it, `jobapply ui` will start the API server but show a "no built frontend" message instead of the UI. If you only need the CLI commands (`run`, `search`, `tailor`) you can skip the Node.js/frontend build entirely — the `mkdir -p jobapply/web_dist` placeholder is sufficient.
 
 `jobapply init` writes `jobapply.toml` and a structured `profile.json` extracted from your resume by the configured LLM. The setup wizard lets you tick off **as many providers as you want** in one go (Gemini + OpenAI + Cloudflare, say) and pick which one is the default — every other provider is still configured and ready for `--provider <name>` at runtime. Open `profile.json` to fine-tune any field (name/email/links, experience bullets, skills, education entries with GPA & coursework, projects, etc.) — every key in the [`Profile` schema](jobapply/profile.py) maps 1:1 to what the resume tailor sees. Use `jobapply config` later to add/remove providers or change credentials, or `jobapply config --show` to print the resolved config.
 
@@ -444,13 +456,20 @@ Tailwind frontend. Long-running operations run as background tasks
 that the UI polls for live progress.
 
 ```bash
-# Start the UI (pre-built bundle ships with the package).
+# Build the frontend (one-time, requires Node.js — skip if already done in Quickstart).
+cd web && npm install && npm run build && cd ..
+
+# Start the UI.
 jobapply ui
 # → JobApply UI → http://127.0.0.1:8000  (browser opens automatically)
 
 # Bind to the LAN, custom port, custom workspace.
 jobapply ui --host 0.0.0.0 --port 8123 --workspace ~/jobs/2026-q2
 ```
+
+> If you see *"no built frontend was found"* when visiting the UI, the
+> `jobapply/web_dist/` directory is empty. Run `cd web && npm run build`
+> to compile the React app into it.
 
 **Routes**
 
@@ -463,9 +482,9 @@ jobapply ui --host 0.0.0.0 --port 8123 --workspace ~/jobs/2026-q2
 
 **Frontend development**
 
-The pre-built bundle (`jobapply/web_dist/`) is served by the FastAPI
-server out of the box, so end users never need a node toolchain. To
-hack on the UI:
+The built bundle (`jobapply/web_dist/`) is served by the FastAPI
+server. To hack on the UI with hot-reload instead of rebuilding after
+every change:
 
 ```bash
 # Backend (terminal 1)

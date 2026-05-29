@@ -144,12 +144,14 @@ class Workspace:
     that we don't bother with pooling).
     """
 
+    _TABLES = [WorkspaceJobEntry.__table__, WorkspaceSearchEntry.__table__]
+
     def __init__(self, path: Path) -> None:
         self.path = path.resolve()
         self.path.mkdir(parents=True, exist_ok=True)
         self.db_path = self.path / WORKSPACE_DB_FILENAME
         self._engine = _engine_for(self.db_path)
-        SQLModel.metadata.create_all(self._engine)
+        SQLModel.metadata.create_all(self._engine, tables=self._TABLES)
 
     @classmethod
     def open(cls, path: str | Path) -> Workspace:

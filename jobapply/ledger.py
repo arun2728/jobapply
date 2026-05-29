@@ -53,7 +53,7 @@ def get_engine(db_path: Path | None = None) -> Engine:
 
 
 def init_db(engine: Engine) -> None:
-    SQLModel.metadata.create_all(engine)
+    SQLModel.metadata.create_all(engine, tables=[JobLedgerEntry.__table__])
 
 
 def should_skip(
