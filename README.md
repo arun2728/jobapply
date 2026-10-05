@@ -534,6 +534,15 @@ Flags worth knowing:
 | `--linkedin-descriptions` / `--no-linkedin-descriptions` | LinkedIn's search endpoint only returns metadata, so by default we issue an extra GET per LinkedIn hit to scrape the full job description. Disable with `--no-linkedin-descriptions` for a faster crawl, but downstream `--score` and `jobapply tailor` won't have a JD to work with. |
 | `--yes` / `-y` | Skip the interactive title/skills/location/provider prompts. |
 
+#### Search Tips (Powered by JobSpy)
+
+JobApply uses [JobSpy](https://github.com/cullenwatson/JobSpy) to aggregate jobs from LinkedIn, Indeed, Glassdoor, ZipRecruiter, and Google Jobs concurrently. Here are a few tips to get the best results from the underlying scraper:
+
+- **Site specifics**: LinkedIn searches globally and uses only the `--location` parameter. ZipRecruiter searches for jobs in the US/Canada. Indeed is the most robust and doesn't heavily rate-limit.
+- **Query expansion**: The `--skills` flag automatically appends to your search term to boost relevance. Indeed searches the *entire job description* (not just the title), so adding skills like `"Python,Kubernetes"` acts as a strict keyword filter. If you get unrelated roles on Indeed, it's because those words appeared somewhere in the description.
+- **LinkedIn descriptions**: By default, LinkedIn's search API only returns metadata. JobApply passes `--linkedin-descriptions` (on by default) to fetch the full job page for every hit, which is required for accurate fit-scoring and tailoring. This takes an extra request per job, so expect LinkedIn to hit rate limits faster.
+- **Rate limits**: Job boards block aggressively. If you receive fewer jobs than expected from LinkedIn or Glassdoor, you likely hit a rate limit. (Support for JobSpy proxy rotation in JobApply is planned).
+
 Output layout:
 
 ```text
