@@ -16,7 +16,7 @@ body {
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
-/* Subtle scrollbar styling that matches the slate-950 background. */
+/* Subtle scrollbar styling — pure black track. */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -25,41 +25,41 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgb(51 65 85 / 0.6);
+  background: rgb(255 255 255 / 0.1);
   border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgb(71 85 105 / 0.9);
+  background: rgb(255 255 255 / 0.2);
 }
 
 @layer components {
   .btn {
     @apply inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium
       transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1
-      focus:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed;
+      focus:ring-offset-black disabled:opacity-50 disabled:cursor-not-allowed;
   }
   .btn-primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-500 focus:ring-brand-400;
+    @apply btn bg-white text-black hover:bg-neutral-200 focus:ring-neutral-400;
   }
   .btn-secondary {
-    @apply btn bg-slate-800 text-slate-100 hover:bg-slate-700 focus:ring-slate-500;
+    @apply btn bg-neutral-900 text-neutral-100 border border-neutral-800 hover:bg-neutral-800 focus:ring-neutral-600;
   }
   .btn-ghost {
-    @apply btn text-slate-300 hover:bg-slate-800 hover:text-slate-100;
+    @apply btn text-neutral-400 hover:bg-neutral-900 hover:text-neutral-100;
   }
   .btn-danger {
-    @apply btn bg-rose-600/90 text-white hover:bg-rose-500;
+    @apply btn bg-red-600/90 text-white hover:bg-red-500;
   }
   .input {
-    @apply block w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2
-      text-sm text-slate-100 placeholder-slate-500 shadow-sm
-      focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-500/40;
+    @apply block w-full rounded-md border border-neutral-800 bg-black px-3 py-2
+      text-sm text-neutral-100 placeholder-neutral-600 shadow-sm
+      focus:border-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-700;
   }
   .label {
-    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400;
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500;
   }
   .card {
-    @apply rounded-lg border border-slate-800 bg-slate-900/40 backdrop-blur-sm shadow-sm;
+    @apply rounded-lg border border-neutral-800 bg-neutral-950 shadow-sm;
   }
   .badge {
     @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;

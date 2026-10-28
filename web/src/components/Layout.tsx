@@ -25,22 +25,22 @@ export default function Layout() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
+      <header className="sticky top-0 z-30 border-b border-neutral-800 bg-black/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
           <div className="flex items-center gap-2">
-            <div className="grid h-8 w-8 place-items-center rounded-lg bg-brand-500/20 text-brand-300">
+            <div className="grid h-8 w-8 place-items-center rounded-lg bg-white text-black">
               <Briefcase size={18} />
             </div>
             <div>
               <div className="text-sm font-semibold tracking-tight">
                 JobApply
               </div>
-              <div className="text-xs text-slate-500">
+              <div className="text-xs text-neutral-500">
                 {status.data ? (
                   <>
                     <span className="font-mono">{total}</span>{" "}
                     {total === 1 ? "job" : "jobs"} ·{" "}
-                    <span className="text-slate-400">
+                    <span className="text-neutral-400">
                       {status.data.provider}/{status.data.model}
                     </span>
                   </>
@@ -53,7 +53,7 @@ export default function Layout() {
           <div className="flex items-center gap-3">
             {active.hasActive ? (
               <div
-                className="hidden items-center gap-2 rounded-full border border-brand-500/40 bg-brand-500/10 px-3 py-1 text-xs font-medium text-brand-200 sm:flex"
+                className="hidden items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-xs font-medium text-neutral-300 sm:flex"
                 title={
                   active.all
                     .map(
@@ -80,8 +80,8 @@ export default function Layout() {
                     clsx(
                       "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                       isActive
-                        ? "bg-slate-800 text-white"
-                        : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100",
+                        ? "bg-neutral-800 text-white"
+                        : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-100",
                     )
                   }
                 >
@@ -96,14 +96,14 @@ export default function Layout() {
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 sm:py-10">
         <Outlet />
       </main>
-      <footer className="border-t border-slate-800 px-4 py-4 text-center text-xs text-slate-500 sm:px-6">
+      <footer className="border-t border-neutral-800 px-4 py-4 text-center text-xs text-neutral-600 sm:px-6">
         Workspace:{" "}
         <span className="font-mono">{status.data?.workspace ?? "…"}</span> ·
         Profile:{" "}
         {status.data?.profile_loaded ? (
-          <span className="text-brand-300">{status.data.profile_name}</span>
+          <span className="text-neutral-400">{status.data.profile_name}</span>
         ) : (
-          <span className="text-amber-300">
+          <span className="text-red-400">
             not loaded — run `jobapply init`
           </span>
         )}

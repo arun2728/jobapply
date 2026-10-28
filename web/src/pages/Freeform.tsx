@@ -45,8 +45,6 @@ export default function Freeform() {
   if (task?.status === "succeeded") {
     const job = (task.result as { job?: { job_id?: string } })?.job;
     if (job?.job_id) {
-      // We use a microtask to let TaskProgress render its final state
-      // briefly before we navigate away.
       setTimeout(() => navigate(`/jobs/${job.job_id}`), 600);
     }
   }
@@ -55,10 +53,10 @@ export default function Freeform() {
     <div className="space-y-6">
       <div className="space-y-1">
         <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
-          <PenSquare size={20} className="text-brand-400" /> Paste a job
+          <PenSquare size={20} className="text-neutral-400" /> Paste a job
           description
         </h1>
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-neutral-500">
           Drop in a JD from anywhere — LinkedIn, an email, a recruiter's PDF
           you've copy-pasted. We'll tailor your resume + cover letter and
           add it to your workspace.
@@ -66,13 +64,13 @@ export default function Freeform() {
       </div>
 
       {!profileLoaded ? (
-        <div className="card border-amber-700/40 bg-amber-900/10 p-4 text-sm text-amber-200">
+        <div className="card border-yellow-800/40 bg-yellow-950/20 p-4 text-sm text-yellow-200">
           profile.json must be configured first. Run{" "}
           <code className="font-mono">jobapply init --resume &lt;path&gt;</code>.
         </div>
       ) : null}
 
-      <form onSubmit={onSubmit} className="card space-y-4 p-5">
+      <form onSubmit={onSubmit} className="card space-y-5 p-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <label>
             <span className="label">Title (optional)</span>
@@ -102,7 +100,7 @@ export default function Freeform() {
             />
           </label>
         </div>
-        <label>
+        <label className="mt-2">
           <span className="label">
             Skills to emphasize (optional, comma-separated)
           </span>
@@ -122,13 +120,13 @@ export default function Freeform() {
             onChange={(e) => setDescription(e.target.value)}
             required
           />
-          <span className="mt-1 block text-xs text-slate-500">
+          <span className="mt-1 block text-xs text-neutral-600">
             Minimum 20 characters. We auto-detect application emails / subject
             lines from the body.
           </span>
         </label>
         {start.isError ? (
-          <p className="text-sm text-rose-400">
+          <p className="text-sm text-red-400">
             {String(start.error?.message ?? start.error)}
           </p>
         ) : null}

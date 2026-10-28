@@ -6,29 +6,29 @@ export function formatStatus(status: string): {
 } {
   switch (status) {
     case "done":
-      return { label: "Tailored", className: "bg-brand-500/15 text-brand-300" };
+      return { label: "Tailored", className: "bg-white/10 text-white" };
     case "tailored":
-      return { label: "Tailored", className: "bg-brand-500/15 text-brand-300" };
+      return { label: "Tailored", className: "bg-white/10 text-white" };
     case "cached":
       return {
         label: "Cached",
-        className: "bg-amber-500/15 text-amber-300",
+        className: "bg-neutral-800 text-neutral-400",
       };
     case "skipped":
-      return { label: "Low fit", className: "bg-slate-500/20 text-slate-300" };
+      return { label: "Low fit", className: "bg-neutral-800 text-neutral-500" };
     case "failed":
-      return { label: "Failed", className: "bg-rose-500/15 text-rose-300" };
+      return { label: "Failed", className: "bg-red-500/10 text-red-400" };
     case "pending":
       return {
         label: "Pending",
-        className: "bg-slate-700/40 text-slate-300",
+        className: "bg-neutral-800 text-neutral-400",
       };
     case "rendered":
-      return { label: "Rendered", className: "bg-brand-500/10 text-brand-300" };
+      return { label: "Rendered", className: "bg-white/10 text-neutral-300" };
     default:
       return {
         label: status || "Unknown",
-        className: "bg-slate-700/40 text-slate-300",
+        className: "bg-neutral-800 text-neutral-400",
       };
   }
 }

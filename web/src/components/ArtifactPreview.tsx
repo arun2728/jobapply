@@ -35,32 +35,15 @@ interface Props {
   job: JobRecord;
 }
 
-/** Tabbed PDF preview for a tailored job's resume + cover letter.
- *
- *  Renders each PDF in an ``<iframe>`` (the browser's built-in PDF
- *  viewer) with Edit / Download / Compile actions in the toolbar.
- *  When the LaTeX source exists but the PDF doesn't (e.g. the user
- *  ran ``--no-pdf``), we show a "Compile now" button that triggers
- *  the same backend route the editor uses.
- *
- *  We deliberately keep the per-file UI homogenous: the editor uses
- *  the same ``api.compileArtifact`` so users get identical behaviour
- *  whether they click Compile from this preview or from inside the
- *  full-screen editor.
- */
+/** Tabbed PDF preview for a tailored job's resume + cover letter. */
 export default function ArtifactPreview({ job }: Props) {
   const available = job.available_artifacts ?? {};
   const [activeIdx, setActiveIdx] = useState(() => {
-    // Land the user on whichever tab actually has content; resume
-    // first, fall back to cover letter.
     if (available["resume.pdf"] || available["resume.tex"]) return 0;
     if (available["cover_letter.pdf"] || available["cover_letter.tex"])
       return 1;
     return 0;
   });
-  // Cache-buster for the iframe URL — without this Chromium happily
-  // serves the stale PDF after a recompile because the URL is
-  // identical. Bumped on mount and after every successful compile.
   const [version, setVersion] = useState(() => Date.now());
 
   const item = ITEMS[activeIdx];
@@ -81,7 +64,7 @@ export default function ArtifactPreview({ job }: Props) {
 
   return (
     <section className="card flex flex-col p-0">
-      <div className="flex items-center gap-1 border-b border-slate-800 px-3 py-2">
+      <div className="flex items-center gap-1 border-b border-neutral-800 px-3 py-2">
         {ITEMS.map((it, i) => {
           const enabled =
             Boolean(available[it.pdf]) || Boolean(available[it.source]);
@@ -91,8 +74,8 @@ export default function ArtifactPreview({ job }: Props) {
               className={
                 "rounded-md px-3 py-1.5 text-sm font-medium transition-colors " +
                 (i === activeIdx
-                  ? "bg-slate-800 text-slate-100"
-                  : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100") +
+                  ? "bg-neutral-800 text-white"
+                  : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-100") +
                 (enabled ? "" : " opacity-50")
               }
               onClick={() => setActiveIdx(i)}
@@ -121,7 +104,7 @@ export default function ArtifactPreview({ job }: Props) {
       </div>
 
       {compile.isError ? (
-        <div className="flex items-start gap-2 border-b border-rose-700/40 bg-rose-900/10 px-3 py-2 text-xs text-rose-200">
+        <div className="flex items-start gap-2 border-b border-red-800/40 bg-red-950/20 px-3 py-2 text-xs text-red-300">
           <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
           <span>
             Compile failed:{" "}
@@ -129,7 +112,7 @@ export default function ArtifactPreview({ job }: Props) {
           </span>
         </div>
       ) : compile.isSuccess ? (
-        <div className="flex items-center gap-2 border-b border-brand-700/40 bg-brand-900/10 px-3 py-2 text-xs text-brand-200">
+        <div className="flex items-center gap-2 border-b border-neutral-700 bg-neutral-900 px-3 py-2 text-xs text-neutral-300">
           <CheckCircle2 size={14} /> PDF rebuilt via{" "}
           <span className="font-mono">{compile.data?.backend}</span>.
         </div>
@@ -229,9 +212,6 @@ function PreviewBody({
   hasSource,
   pdfUrl,
 }: PreviewBodyProps) {
-  // The iframe key combines pdf name + version so switching tabs
-  // and recompiling both force a remount — Chromium's PDF viewer
-  // doesn't always honor URL query changes otherwise.
   const iframeKey = useMemo(() => `${item.pdf}-${pdfUrl}`, [item.pdf, pdfUrl]);
 
   if (hasPdf) {
@@ -240,17 +220,17 @@ function PreviewBody({
         key={iframeKey}
         src={pdfUrl}
         title={`${item.label} preview`}
-        className="h-[75vh] w-full bg-slate-950"
+        className="h-[75vh] w-full bg-black"
       />
     );
   }
   if (hasSource) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 p-10 text-center">
-        <Hammer size={20} className="text-slate-500" />
-        <p className="max-w-md text-sm text-slate-300">
+        <Hammer size={20} className="text-neutral-600" />
+        <p className="max-w-md text-sm text-neutral-400">
           The LaTeX source for{" "}
-          <span className="font-mono text-slate-100">{item.source}</span> is on
+          <span className="font-mono text-white">{item.source}</span> is on
           disk, but no PDF has been compiled yet. Hit{" "}
           <span className="font-semibold">Compile</span> above to render it
           now, or open the editor to tweak the source first.
@@ -268,8 +248,8 @@ function PreviewBody({
   }
   return (
     <div className="flex flex-col items-center justify-center gap-3 p-10 text-center">
-      <FileText size={20} className="text-slate-500" />
-      <p className="max-w-md text-sm text-slate-400">
+      <FileText size={20} className="text-neutral-600" />
+      <p className="max-w-md text-sm text-neutral-500">
         No {item.label.toLowerCase()} has been generated yet for this job.
         Tailor the resume + cover letter from the buttons above.
       </p>

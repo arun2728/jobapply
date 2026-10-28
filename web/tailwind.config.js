@@ -5,23 +5,24 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Brand palette tuned to the existing CLI (the Rich output and
-        // README hero shots use a similar emerald + slate combo).
+        // Geist-inspired neutral palette — pure black/white with gray
+        // accents. No colour hue; the UI is entirely monochrome.
         brand: {
-          50: "#ecfdf5",
-          100: "#d1fae5",
-          200: "#a7f3d0",
-          300: "#6ee7b7",
-          400: "#34d399",
-          500: "#10b981",
-          600: "#059669",
-          700: "#047857",
-          800: "#065f46",
-          900: "#064e3b",
+          50: "#fafafa",
+          100: "#ededed",
+          200: "#d9d9d9",
+          300: "#bbb",
+          400: "#888",
+          500: "#666",
+          600: "#444",
+          700: "#333",
+          800: "#222",
+          900: "#111",
         },
       },
       fontFamily: {
         sans: [
+          "Geist",
           "Inter",
           "system-ui",
           "-apple-system",
@@ -29,7 +30,13 @@ export default {
           "Roboto",
           "sans-serif",
         ],
-        mono: ["JetBrains Mono", "ui-monospace", "Menlo", "monospace"],
+        mono: [
+          "Geist Mono",
+          "JetBrains Mono",
+          "ui-monospace",
+          "Menlo",
+          "monospace",
+        ],
       },
     },
   },

@@ -43,22 +43,11 @@ function isEditable(name: string): name is ArtifactName {
   return TABS.some((t) => t.name === name);
 }
 
-/** Full-screen editor: edits the LaTeX source for resume / cover
- *  letter, saves to disk, and recompiles to PDF on demand.
- *
- *  We split the screen left/right with the editor on the left and a
- *  PDF preview iframe on the right. The iframe URL carries a
- *  cache-busting `?v=<mtime>` so the browser actually re-renders the
- *  PDF after a successful compile (Chromium's PDF viewer aggressively
- *  caches the URL otherwise).
- */
 export default function ArtifactEditor() {
   const { jobId, name } = useParams<{ jobId: string; name: string }>();
   const navigate = useNavigate();
   const job = useJob(jobId);
 
-  // Validate the route param up front so we never call the editable-
-  // only API endpoints with a bogus filename.
   useEffect(() => {
     if (name && !isEditable(name)) {
       navigate(`/jobs/${jobId}/edit/resume.tex`, { replace: true });
@@ -81,12 +70,8 @@ function Editor({ jobId, name, job }: EditorProps) {
   const save = useSaveArtifact(jobId, name);
   const compile = useCompileArtifact(jobId, name);
 
-  // We mirror the server text into local state so the editor stays
-  // responsive while the user types — only flushing back on save.
   const [draft, setDraft] = useState<string>("");
   const baselineRef = useRef<string>("");
-  // Cache-buster for the PDF preview iframe — bumped after every
-  // successful compile so the browser actually reloads the file.
   const [pdfVersion, setPdfVersion] = useState<number>(() => Date.now());
 
   useEffect(() => {
@@ -124,9 +109,6 @@ function Editor({ jobId, name, job }: EditorProps) {
     setDraft(baselineRef.current);
   };
 
-  // CodeMirror extension list — we only use the ``stex`` syntax for
-  // LaTeX files; Markdown gets the default plain-text experience to
-  // keep the bundle small (no markdown grammar import).
   const extensions = useMemo(() => {
     const exts = [
       EditorView.lineWrapping,
@@ -143,21 +125,15 @@ function Editor({ jobId, name, job }: EditorProps) {
 
   const tabName = TABS.find((t) => t.name === name)?.label ?? name;
 
-  // The whole editor page is locked to the viewport so the source
-  // editor and the PDF preview each scroll *inside* their card. The
-  // 230px subtracted accounts for the layout chrome (header + footer
-  // + main padding) plus the editor's own breadcrumb / tab rows. We
-  // keep a generous floor so very short viewports still get a usable
-  // editor area.
   return (
     <div className="flex h-[calc(100vh-230px)] min-h-[520px] flex-col gap-3 overflow-hidden">
       <div className="flex flex-wrap items-center gap-2">
         <Link to={`/jobs/${jobId}`} className="btn-ghost">
           <ArrowLeft size={14} /> Back to job
         </Link>
-        <h1 className="text-base font-semibold text-slate-100">
+        <h1 className="text-base font-semibold text-white">
           {job.data?.title || job.data?.company || jobId}
-          <span className="ml-2 font-mono text-xs text-slate-500">
+          <span className="ml-2 font-mono text-xs text-neutral-600">
             {tabName}
           </span>
         </h1>
@@ -165,15 +141,15 @@ function Editor({ jobId, name, job }: EditorProps) {
           className={
             "ml-auto rounded-full px-2 py-0.5 text-[11px] font-medium " +
             (dirty
-              ? "bg-amber-500/15 text-amber-200 ring-1 ring-amber-500/40"
-              : "bg-slate-800 text-slate-400")
+              ? "bg-yellow-500/10 text-yellow-200 ring-1 ring-yellow-500/30"
+              : "bg-neutral-800 text-neutral-500")
           }
         >
           {dirty ? "unsaved changes" : "in sync with disk"}
         </span>
       </div>
 
-      <nav className="flex flex-wrap gap-1 border-b border-slate-800 pb-1 text-sm">
+      <nav className="flex flex-wrap gap-1 border-b border-neutral-800 pb-1 text-sm">
         {TABS.map((t) => (
           <Link
             key={t.name}
@@ -181,8 +157,8 @@ function Editor({ jobId, name, job }: EditorProps) {
             className={
               "rounded-md px-3 py-1.5 transition-colors " +
               (t.name === name
-                ? "bg-slate-800 text-slate-100"
-                : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-100")
+                ? "bg-neutral-800 text-white"
+                : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-100")
             }
           >
             {t.label}
@@ -192,9 +168,9 @@ function Editor({ jobId, name, job }: EditorProps) {
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="card flex min-h-0 flex-col overflow-hidden p-0">
-          <div className="flex flex-shrink-0 items-center gap-2 border-b border-slate-800 px-3 py-2">
-            <Hammer size={14} className="text-slate-400" />
-            <span className="text-xs uppercase tracking-wide text-slate-400">
+          <div className="flex flex-shrink-0 items-center gap-2 border-b border-neutral-800 px-3 py-2">
+            <Hammer size={14} className="text-neutral-500" />
+            <span className="text-xs uppercase tracking-wide text-neutral-500">
               Source
             </span>
             <div className="ml-auto flex items-center gap-2">
@@ -235,20 +211,15 @@ function Editor({ jobId, name, job }: EditorProps) {
           </div>
 
           {text.isLoading ? (
-            <div className="flex flex-1 items-center justify-center gap-2 text-sm text-slate-400">
+            <div className="flex flex-1 items-center justify-center gap-2 text-sm text-neutral-500">
               <Loader2 size={16} className="animate-spin" /> Loading source…
             </div>
           ) : text.error ? (
-            <div className="flex flex-1 items-center gap-2 p-4 text-sm text-rose-300">
+            <div className="flex flex-1 items-center gap-2 p-4 text-sm text-red-400">
               <AlertTriangle size={16} />{" "}
               {String((text.error as Error)?.message ?? "Failed to load")}
             </div>
           ) : (
-            // ``min-h-0`` is the magic that lets ``flex-1`` actually
-            // shrink past the editor's natural content height; without
-            // it CodeMirror would size to its content and push the
-            // outer page into a scrollbar. With it, CodeMirror sits in
-            // a bounded box and provides its own internal scroll.
             <div className="min-h-0 flex-1">
               <CodeMirror
                 value={draft}
@@ -279,14 +250,14 @@ function Editor({ jobId, name, job }: EditorProps) {
         </div>
 
         <div className="card flex min-h-0 flex-col overflow-hidden p-0">
-          <div className="flex flex-shrink-0 items-center gap-2 border-b border-slate-800 px-3 py-2">
-            <Eye size={14} className="text-slate-400" />
-            <span className="text-xs uppercase tracking-wide text-slate-400">
+          <div className="flex flex-shrink-0 items-center gap-2 border-b border-neutral-800 px-3 py-2">
+            <Eye size={14} className="text-neutral-500" />
+            <span className="text-xs uppercase tracking-wide text-neutral-500">
               {pdfName ? `Preview · ${pdfName}` : "Preview"}
             </span>
             {pdfAvailable && pdfName ? (
               <a
-                className="ml-auto text-xs text-brand-300 hover:text-brand-200"
+                className="ml-auto text-xs text-neutral-400 hover:text-white"
                 href={api.artifactUrl(jobId, pdfName)}
                 target="_blank"
                 rel="noreferrer"
@@ -296,22 +267,20 @@ function Editor({ jobId, name, job }: EditorProps) {
             ) : null}
           </div>
           {pdfName && pdfAvailable ? (
-            // The browser's PDF viewer handles its own internal
-            // scrolling — we just give the iframe a bounded box.
             <iframe
               key={`${pdfName}-${pdfVersion}`}
               src={`${api.artifactUrl(jobId, pdfName)}?v=${pdfVersion}`}
-              className="min-h-0 w-full flex-1 bg-slate-950"
+              className="min-h-0 w-full flex-1 bg-black"
               title={`${pdfName} preview`}
             />
           ) : (
-            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 overflow-auto p-6 text-center text-sm text-slate-400">
-              <Hammer size={20} className="text-slate-500" />
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 overflow-auto p-6 text-center text-sm text-neutral-500">
+              <Hammer size={20} className="text-neutral-600" />
               <p className="max-w-xs">
                 {pdfName
                   ? "No PDF on disk yet. Click "
                   : "Markdown sources don't compile to PDF directly. Edit the .tex file or "}
-                <span className="font-semibold text-slate-200">
+                <span className="font-semibold text-neutral-300">
                   {pdfName
                     ? "Save & compile PDF"
                     : "use the markdown tab in the artifacts list."}
@@ -346,25 +315,25 @@ function StatusFooter({
   if (!hasMessage) return null;
 
   return (
-    <div className="flex-shrink-0 border-t border-slate-800 px-3 py-2 text-xs">
+    <div className="flex-shrink-0 border-t border-neutral-800 px-3 py-2 text-xs">
       {compileError ? (
-        <div className="flex items-start gap-2 text-rose-300">
+        <div className="flex items-start gap-2 text-red-400">
           <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
           <span>{compileError.message}</span>
         </div>
       ) : compileSuccess ? (
-        <div className="flex items-center gap-2 text-brand-300">
+        <div className="flex items-center gap-2 text-neutral-300">
           <CheckCircle2 size={14} />
           PDF rebuilt via{" "}
           <span className="font-mono">{backend || "tex_to_pdf"}</span>.
         </div>
       ) : saveError ? (
-        <div className="flex items-start gap-2 text-rose-300">
+        <div className="flex items-start gap-2 text-red-400">
           <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
           <span>{saveError.message}</span>
         </div>
       ) : saveSuccess ? (
-        <div className="flex items-center gap-2 text-brand-300">
+        <div className="flex items-center gap-2 text-neutral-300">
           <CheckCircle2 size={14} /> Saved to disk.
         </div>
       ) : null}

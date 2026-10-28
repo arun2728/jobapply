@@ -88,18 +88,18 @@ export default function Dashboard() {
     <div className="space-y-6">
       <div className="space-y-1">
         <h1 className="text-2xl font-bold tracking-tight">Jobs</h1>
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-neutral-500">
           Run a search, then tailor your resume + cover letter for the roles
           you like.
         </p>
       </div>
 
       {!profileLoaded ? (
-        <div className="card border-amber-700/40 bg-amber-900/10 p-4 text-sm text-amber-200">
+        <div className="card border-yellow-800/40 bg-yellow-950/20 p-4 text-sm text-yellow-200">
           <div className="font-semibold">profile.json not found</div>
-          <p className="mt-1 text-amber-100/80">
+          <p className="mt-1 text-yellow-200/80">
             Run{" "}
-            <code className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-xs">
+            <code className="rounded bg-neutral-900 px-1.5 py-0.5 font-mono text-xs">
               jobapply init --resume &lt;path&gt;
             </code>{" "}
             in this directory before tailoring or scoring.
@@ -124,7 +124,7 @@ export default function Dashboard() {
 
       <div className="card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:gap-4">
         <div className="flex flex-1 items-center gap-2">
-          <Filter size={16} className="text-slate-400" />
+          <Filter size={16} className="text-neutral-500" />
           <input
             className="input flex-1"
             placeholder="Filter by title, company, description…"
@@ -139,8 +139,8 @@ export default function Dashboard() {
               className={clsx(
                 "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
                 filter === f.value
-                  ? "bg-brand-500/20 text-brand-200"
-                  : "text-slate-400 hover:bg-slate-800 hover:text-slate-100",
+                  ? "bg-white text-black"
+                  : "text-neutral-500 hover:bg-neutral-800 hover:text-neutral-100",
               )}
               onClick={() => setFilter(f.value)}
             >
@@ -169,18 +169,18 @@ export default function Dashboard() {
       </div>
 
       {jobs.isLoading ? (
-        <div className="card flex items-center gap-2 p-6 text-sm text-slate-400">
+        <div className="card flex items-center gap-2 p-6 text-sm text-neutral-500">
           <Loader2 size={16} className="animate-spin" /> Loading jobs…
         </div>
       ) : filtered.length === 0 ? (
         <div className="card flex flex-col items-center gap-3 p-10 text-center">
-          <div className="text-base font-semibold text-slate-200">
+          <div className="text-base font-semibold text-neutral-200">
             No jobs match.
           </div>
-          <p className="max-w-md text-sm text-slate-400">
+          <p className="max-w-md text-sm text-neutral-500">
             Run a search above, paste a job description, or change the filter
             to see roles. Pending jobs:{" "}
-            <span className="font-mono text-slate-200">{pendingCount}</span>.
+            <span className="font-mono text-neutral-300">{pendingCount}</span>.
           </p>
         </div>
       ) : (

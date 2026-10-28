@@ -36,10 +36,10 @@ export default function TaskProgress({
   if (!task) {
     return (
       <div className="card flex items-center gap-3 p-4">
-        <Loader2 size={16} className="animate-spin text-brand-400" />
-        <span className="text-sm text-slate-300">Starting task…</span>
+        <Loader2 size={16} className="animate-spin text-neutral-400" />
+        <span className="text-sm text-neutral-400">Starting task…</span>
         {error ? (
-          <span className="text-xs text-rose-400">{error}</span>
+          <span className="text-xs text-red-400">{error}</span>
         ) : null}
       </div>
     );
@@ -53,10 +53,10 @@ export default function TaskProgress({
         : Loader2;
   const tone =
     task.status === "succeeded"
-      ? "text-brand-400"
+      ? "text-white"
       : task.status === "failed"
-        ? "text-rose-400"
-        : "text-amber-300";
+        ? "text-red-400"
+        : "text-neutral-400";
   const isRunning = task.status === "pending" || task.status === "running";
 
   return (
@@ -66,10 +66,10 @@ export default function TaskProgress({
           size={16}
           className={tone + (isRunning ? " animate-spin" : "")}
         />
-        <span className="font-semibold text-slate-100">
+        <span className="font-semibold text-white">
           {task.kind.charAt(0).toUpperCase() + task.kind.slice(1)} task
         </span>
-        <span className="ml-auto text-xs uppercase tracking-wide text-slate-500">
+        <span className="ml-auto text-xs uppercase tracking-wide text-neutral-600">
           {task.status}
         </span>
         {isRunning ? (
@@ -81,17 +81,17 @@ export default function TaskProgress({
           </button>
         ) : null}
       </div>
-      <div className="text-sm text-slate-300">
+      <div className="text-sm text-neutral-400">
         {task.progress.label || "Working…"}
       </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
+      <div className="h-1.5 overflow-hidden rounded-full bg-neutral-800">
         <div
           className={`h-full transition-all ${
             task.status === "failed"
-              ? "bg-rose-500"
+              ? "bg-red-500"
               : task.status === "succeeded"
-                ? "bg-brand-500"
-                : "bg-brand-400/80"
+                ? "bg-white"
+                : "bg-neutral-400"
           }`}
           style={{
             width: `${
@@ -103,16 +103,16 @@ export default function TaskProgress({
         />
       </div>
       {task.error ? (
-        <pre className="max-h-40 overflow-auto rounded bg-rose-900/30 p-2 text-xs text-rose-100">
+        <pre className="max-h-40 overflow-auto rounded bg-red-950/40 p-2 text-xs text-red-200">
           {task.error}
         </pre>
       ) : null}
       {task.progress.log.length > 0 ? (
         <details className="text-xs">
-          <summary className="cursor-pointer text-slate-400 hover:text-slate-200">
+          <summary className="cursor-pointer text-neutral-500 hover:text-neutral-300">
             Log ({task.progress.log.length})
           </summary>
-          <div className="mt-2 max-h-48 space-y-0.5 overflow-auto rounded bg-slate-950/80 p-2 font-mono text-[11px] text-slate-300">
+          <div className="mt-2 max-h-48 space-y-0.5 overflow-auto rounded bg-black/80 p-2 font-mono text-[11px] text-neutral-400">
             {task.progress.log.slice(-100).map((line, i) => (
               <div key={i}>{line}</div>
             ))}

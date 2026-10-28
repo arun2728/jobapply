@@ -14,7 +14,7 @@ const ArtifactEditor = lazy(() => import("@/pages/ArtifactEditor"));
 
 function EditorFallback() {
   return (
-    <div className="card flex items-center gap-2 p-6 text-sm text-slate-300">
+    <div className="card flex items-center gap-2 p-6 text-sm text-neutral-400">
       <Loader2 size={16} className="animate-spin" /> Loading editor…
     </div>
   );

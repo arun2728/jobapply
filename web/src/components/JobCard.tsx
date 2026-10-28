@@ -50,14 +50,14 @@ export default function JobCard({ job, selected, onToggle }: Props) {
   return (
     <div
       className={`card flex flex-col gap-3 p-4 transition-colors ${
-        selected ? "ring-2 ring-brand-400/60" : "hover:border-slate-700"
-      } ${live.task ? "border-brand-500/40 ring-1 ring-brand-500/30" : ""}`}
+        selected ? "ring-2 ring-neutral-500" : "hover:border-neutral-700"
+      } ${live.task ? "border-neutral-600 ring-1 ring-neutral-600" : ""}`}
     >
       <div className="flex items-start gap-3">
         {onToggle ? (
           <input
             type="checkbox"
-            className="mt-1 h-4 w-4 accent-brand-500"
+            className="mt-1 h-4 w-4 accent-white"
             checked={!!selected}
             onChange={(e) => onToggle(e.target.checked)}
             aria-label="Select for batch run"
@@ -66,11 +66,11 @@ export default function JobCard({ job, selected, onToggle }: Props) {
         <div className="min-w-0 flex-1">
           <Link
             to={`/jobs/${job.job_id}`}
-            className="block truncate text-base font-semibold text-slate-100 hover:text-brand-300"
+            className="block truncate text-base font-semibold text-white hover:text-neutral-300"
           >
             {job.title || "Untitled role"}
           </Link>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500">
             {job.company ? (
               <span className="flex items-center gap-1">
                 <Building2 size={12} />
@@ -93,7 +93,7 @@ export default function JobCard({ job, selected, onToggle }: Props) {
         </div>
         <div className="flex flex-col items-end gap-1">
           {live.task ? (
-            <span className="badge bg-brand-500/15 text-brand-200 ring-1 ring-brand-500/40">
+            <span className="badge bg-neutral-800 text-neutral-200 ring-1 ring-neutral-700">
               <Loader2 size={10} className="mr-1 animate-spin" />
               {liveKind === "email"
                 ? "Drafting email"
@@ -103,7 +103,7 @@ export default function JobCard({ job, selected, onToggle }: Props) {
             </span>
           ) : failedTask ? (
             <span
-              className="badge bg-rose-500/15 text-rose-200 ring-1 ring-rose-500/40"
+              className="badge bg-red-500/10 text-red-400 ring-1 ring-red-500/30"
               title={(failedTask.error || "").slice(0, 600)}
             >
               <AlertTriangle size={10} className="mr-1" />
@@ -115,9 +115,9 @@ export default function JobCard({ job, selected, onToggle }: Props) {
             <span className={"badge " + status.className}>{status.label}</span>
           )}
           {job.fit ? (
-            <span className="text-xs text-slate-400">
+            <span className="text-xs text-neutral-500">
               fit{" "}
-              <span className="font-mono text-slate-200">
+              <span className="font-mono text-neutral-300">
                 {formatScore(job.fit.score)}
               </span>
             </span>
@@ -126,59 +126,59 @@ export default function JobCard({ job, selected, onToggle }: Props) {
       </div>
       {live.task ? (
         <div className="-mt-1 space-y-1">
-          <div className="h-1 overflow-hidden rounded-full bg-slate-800">
+          <div className="h-1 overflow-hidden rounded-full bg-neutral-800">
             <div
-              className="h-full rounded-full bg-brand-400 transition-all"
+              className="h-full rounded-full bg-white transition-all"
               style={{
                 width: `${Math.max(8, Math.min(100, live.percent || 12))}%`,
               }}
             />
           </div>
-          <div className="text-[11px] uppercase tracking-wide text-brand-300">
+          <div className="text-[11px] uppercase tracking-wide text-neutral-400">
             {live.label}
           </div>
         </div>
       ) : null}
       {job.fit?.rationale ? (
-        <p className="line-clamp-2 text-sm text-slate-400">
+        <p className="line-clamp-2 text-sm text-neutral-500">
           {job.fit.rationale}
         </p>
       ) : job.description ? (
         <Markdown
           compact
-          className="line-clamp-2 text-sm leading-snug text-slate-500"
+          className="line-clamp-2 text-sm leading-snug text-neutral-600"
         >
           {job.description.slice(0, 600)}
         </Markdown>
       ) : null}
       <div className="flex flex-wrap items-center gap-2 text-xs">
         {liveKind === "tailor" || liveKind === "run" ? (
-          <span className="flex items-center gap-1 text-brand-300">
+          <span className="flex items-center gap-1 text-neutral-300">
             <Loader2 size={12} className="animate-spin" /> Tailoring resume…
           </span>
         ) : isTailored ? (
-          <span className="flex items-center gap-1 text-brand-300">
+          <span className="flex items-center gap-1 text-neutral-300">
             <FileCheck2 size={12} /> Resume + cover ready
           </span>
         ) : (
-          <span className="text-slate-500">No resume yet</span>
+          <span className="text-neutral-600">No resume yet</span>
         )}
         {liveKind === "email" ? (
-          <span className="flex items-center gap-1 text-amber-300">
+          <span className="flex items-center gap-1 text-neutral-400">
             <Loader2 size={12} className="animate-spin" /> Drafting email…
           </span>
         ) : hasEmailDraft ? (
-          <span className="flex items-center gap-1 text-amber-300">
+          <span className="flex items-center gap-1 text-neutral-400">
             <Mail size={12} /> Email drafted
           </span>
         ) : recipient ? (
-          <span className="flex items-center gap-1 text-amber-300">
+          <span className="flex items-center gap-1 text-neutral-400">
             <Mail size={12} /> {recipient}
           </span>
         ) : null}
         <Link
           to={`/jobs/${job.job_id}`}
-          className="ml-auto text-brand-400 hover:text-brand-200"
+          className="ml-auto text-neutral-500 hover:text-white"
         >
           Details →
         </Link>

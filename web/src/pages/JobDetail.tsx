@@ -48,10 +48,6 @@ export default function JobDetail() {
   const deleteJob = useDeleteJob();
   const [emailOpen, setEmailOpen] = useState(false);
   const [tailorOpen, setTailorOpen] = useState(false);
-  // Pick up any tailor/run/email task targeting this job — whether
-  // we kicked it off from this page or from somewhere else (e.g. the
-  // dashboard batch tailor). The hook returns null when nothing is
-  // currently active.
   const live = useActiveTaskFor(jobId);
   const lastTask = useLastTaskFor(jobId);
   const liveKind = live.task?.kind;
@@ -59,12 +55,6 @@ export default function JobDetail() {
   const isTailoring = liveKind === "tailor" || liveKind === "run";
   const isDraftingEmail = liveKind === "email";
 
-  // Sticky task ID: keep showing the TaskProgress panel even after a
-  // task settles to a terminal state. Without this the panel
-  // disappears the instant the task fails — leaving the user with no
-  // hint of what went wrong. We seed it from the live task and
-  // keep the most recent terminal task visible until the user kicks
-  // off a new run.
   const [stickyTaskId, setStickyTaskId] = useState<string | null>(null);
   useEffect(() => {
     if (live.task) setStickyTaskId(live.task.task_id);
@@ -74,7 +64,7 @@ export default function JobDetail() {
   if (!jobId) return null;
   if (job.isLoading) {
     return (
-      <div className="card flex items-center gap-2 p-6 text-sm text-slate-300">
+      <div className="card flex items-center gap-2 p-6 text-sm text-neutral-400">
         <Loader2 size={16} className="animate-spin" /> Loading…
       </div>
     );
@@ -82,7 +72,7 @@ export default function JobDetail() {
   if (job.error || !job.data) {
     return (
       <div className="card p-6 text-sm">
-        <p className="text-rose-300">
+        <p className="text-red-400">
           Couldn't load this job:{" "}
           {String((job.error as Error)?.message ?? "missing")}
         </p>
@@ -107,8 +97,6 @@ export default function JobDetail() {
         model: opts.model,
         no_pdf: opts.no_pdf,
       });
-      // Capture the new task_id immediately so any prior failure
-      // panel is replaced rather than lingering side-by-side.
       setStickyTaskId(t.task_id);
       setTailorOpen(false);
     } catch {
@@ -130,15 +118,15 @@ export default function JobDetail() {
         </Link>
         <span className={"badge " + status.className}>{status.label}</span>
         {j.fit ? (
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-neutral-500">
             Fit{" "}
-            <span className="font-mono text-slate-200">
+            <span className="font-mono text-neutral-300">
               {formatScore(j.fit.score)}
             </span>
           </span>
         ) : null}
         <button
-          className="btn-ghost ml-auto text-rose-300 hover:bg-rose-900/30"
+          className="btn-ghost ml-auto text-red-400 hover:bg-red-950/30"
           onClick={onDelete}
           disabled={deleteJob.isPending}
         >
@@ -147,10 +135,10 @@ export default function JobDetail() {
       </div>
 
       <header className="card space-y-3 p-5">
-        <h1 className="text-xl font-bold tracking-tight text-slate-50">
+        <h1 className="text-xl font-bold tracking-tight text-white">
           {j.title || "Untitled role"}
         </h1>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-400">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-neutral-500">
           {j.company ? (
             <span className="flex items-center gap-1">
               <Building2 size={14} />
@@ -168,7 +156,7 @@ export default function JobDetail() {
               href={url}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center gap-1 text-brand-300 hover:text-brand-200"
+              className="flex items-center gap-1 text-neutral-400 hover:text-white"
             >
               <ExternalLink size={14} />
               {host || "Apply"}
@@ -176,14 +164,14 @@ export default function JobDetail() {
           ) : null}
         </div>
         {j.fit?.rationale ? (
-          <p className="text-sm text-slate-300">
-            <span className="font-semibold text-slate-200">Fit:</span>{" "}
+          <p className="text-sm text-neutral-400">
+            <span className="font-semibold text-neutral-300">Fit:</span>{" "}
             {j.fit.rationale}
           </p>
         ) : null}
         {j.fit?.missing_keywords && j.fit.missing_keywords.length > 0 ? (
-          <p className="text-xs text-slate-500">
-            <span className="text-slate-400">Missing keywords:</span>{" "}
+          <p className="text-xs text-neutral-600">
+            <span className="text-neutral-500">Missing keywords:</span>{" "}
             {j.fit.missing_keywords.join(", ")}
           </p>
         ) : null}
@@ -235,7 +223,7 @@ export default function JobDetail() {
         />
       ) : null}
       {tailor.isError ? (
-        <div className="card border-rose-700/40 bg-rose-900/10 p-4 text-sm text-rose-300">
+        <div className="card border-red-800/40 bg-red-950/20 p-4 text-sm text-red-400">
           {String(tailor.error?.message ?? tailor.error)}
         </div>
       ) : null}
@@ -244,7 +232,7 @@ export default function JobDetail() {
         <>
           <ArtifactPreview job={j} />
           <details className="card p-4 text-sm">
-            <summary className="cursor-pointer text-slate-400 hover:text-slate-200">
+            <summary className="cursor-pointer text-neutral-500 hover:text-neutral-300">
               Sources &amp; raw files
             </summary>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -263,48 +251,48 @@ export default function JobDetail() {
           </details>
         </>
       ) : (
-        <section className="card border-dashed p-5 text-sm text-slate-400">
-          No tailored resume yet. Click <span className="font-semibold text-slate-200">Tailor resume + cover letter</span> above to generate one.
+        <section className="card border-dashed p-5 text-sm text-neutral-500">
+          No tailored resume yet. Click <span className="font-semibold text-neutral-200">Tailor resume + cover letter</span> above to generate one.
         </section>
       )}
 
       <section className="card space-y-3 p-5">
-        <h2 className="text-sm font-semibold text-slate-200">
+        <h2 className="text-sm font-semibold text-neutral-300">
           Job description
         </h2>
         {(j.description || "").trim() ? (
-          <Markdown className="max-h-[60vh] overflow-auto rounded bg-slate-950/40 p-4">
+          <Markdown className="max-h-[60vh] overflow-auto rounded bg-black/40 p-4">
             {j.description!}
           </Markdown>
         ) : (
-          <p className="text-sm italic text-slate-500">(empty)</p>
+          <p className="text-sm italic text-neutral-600">(empty)</p>
         )}
       </section>
 
       {j.tailored_resume ? (
         <section className="card space-y-3 p-5">
-          <h2 className="text-sm font-semibold text-slate-200">Tailored resume preview</h2>
+          <h2 className="text-sm font-semibold text-neutral-300">Tailored resume preview</h2>
           {j.tailored_resume.summary ? (
-            <p className="text-sm text-slate-300">{j.tailored_resume.summary}</p>
+            <p className="text-sm text-neutral-400">{j.tailored_resume.summary}</p>
           ) : null}
           {j.tailored_resume.skills && j.tailored_resume.skills.length > 0 ? (
-            <p className="text-sm text-slate-400">
-              <span className="text-slate-500">Skills: </span>
+            <p className="text-sm text-neutral-500">
+              <span className="text-neutral-600">Skills: </span>
               {j.tailored_resume.skills.join(", ")}
             </p>
           ) : null}
           {(j.tailored_resume.experience ?? []).map((role, i) => (
-            <div key={i} className="rounded border border-slate-800 p-3">
-              <div className="text-sm font-semibold text-slate-100">
+            <div key={i} className="rounded border border-neutral-800 p-3">
+              <div className="text-sm font-semibold text-white">
                 {role.role}{" "}
-                <span className="text-slate-400">@ {role.company}</span>
+                <span className="text-neutral-500">@ {role.company}</span>
                 {role.dates ? (
-                  <span className="ml-2 text-xs text-slate-500">
+                  <span className="ml-2 text-xs text-neutral-600">
                     {role.dates}
                   </span>
                 ) : null}
               </div>
-              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-300">
+              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-neutral-400">
                 {(role.bullets ?? []).map((b, k) => (
                   <li key={k}>{b}</li>
                 ))}

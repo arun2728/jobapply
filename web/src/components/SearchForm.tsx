@@ -52,12 +52,12 @@ export default function SearchForm({ onTaskStarted }: Props) {
   return (
     <form
       onSubmit={onSubmit}
-      className="card space-y-4 border-slate-800/80 bg-slate-900/40 p-5"
+      className="card space-y-4 border-neutral-800 bg-neutral-950 p-5"
     >
-      <div className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-        <Search size={16} className="text-brand-400" />
+      <div className="flex items-center gap-2 text-sm font-semibold text-neutral-200">
+        <Search size={16} className="text-neutral-400" />
         Search job boards
-        <span className="ml-auto text-xs font-normal text-slate-500">
+        <span className="ml-auto text-xs font-normal text-neutral-600">
           Sites: {status.data?.sites?.join(", ") ?? "—"}
         </span>
       </div>
@@ -105,13 +105,13 @@ export default function SearchForm({ onTaskStarted }: Props) {
           />
         </label>
       </div>
-      <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-300">
+      <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-neutral-400">
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
             checked={score}
             onChange={(e) => setScore(e.target.checked)}
-            className="accent-brand-500"
+            className="accent-white"
           />
           Score against profile
         </label>
@@ -120,7 +120,7 @@ export default function SearchForm({ onTaskStarted }: Props) {
             type="checkbox"
             checked={remote}
             onChange={(e) => setRemote(e.target.checked)}
-            className="accent-brand-500"
+            className="accent-white"
           />
           Remote-friendly only
         </label>
@@ -129,7 +129,7 @@ export default function SearchForm({ onTaskStarted }: Props) {
             type="checkbox"
             checked={linkedin}
             onChange={(e) => setLinkedin(e.target.checked)}
-            className="accent-brand-500"
+            className="accent-white"
           />
           Fetch LinkedIn descriptions
         </label>
@@ -138,18 +138,18 @@ export default function SearchForm({ onTaskStarted }: Props) {
             type="checkbox"
             checked={force}
             onChange={(e) => setForce(e.target.checked)}
-            className="accent-brand-500"
+            className="accent-white"
           />
           Force (ignore dedupe)
         </label>
       </div>
       <div className="flex items-center justify-between">
         {start.isError ? (
-          <p className="text-sm text-rose-400">
+          <p className="text-sm text-red-400">
             {String(start.error?.message ?? start.error)}
           </p>
         ) : (
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-neutral-600">
             New jobs are added to the workspace; duplicates are skipped.
           </p>
         )}
